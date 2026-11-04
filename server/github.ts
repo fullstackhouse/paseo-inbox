@@ -70,6 +70,26 @@ export class GithubSource {
     return Promise.all(hits.map((hit) => this.details(hit)));
   }
 
+  /** Logins with access to the repo (for handoff suggestions); empty without permission to list them. */
+  async collaborators(repo: string): Promise<string[]> {
+    const lines = (out: string) => out.split("\n").map((line) => line.trim()).filter(Boolean);
+    const [direct, org] = await Promise.all([
+      this.run(["api", `repos/${repo}/collaborators?per_page=100`, "--jq", ".[].login"]).then(lines, () => []),
+      // The repo owner's organization members (a user-owned repo just fails this and adds nobody).
+      this.run(["api", `orgs/${repo.split("/")[0]}/members?per_page=100`, "--jq", ".[].login"]).then(lines, () => []),
+    ]);
+    return [...new Set([...direct, ...org])];
+  }
+
+  /** One PR by URL or owner/repo#n, as a source item (for a pasted link). */
+  async one(ref: string): Promise<Pr> {
+    const parsed = parsePrRef(ref);
+    if (!parsed) throw new Error("Paste a GitHub PR link (https://github.com/owner/repo/pull/123) or owner/repo#123");
+    const out = await this.run(["pr", "view", String(parsed.number), "--repo", parsed.repo, "--json", "number,title,url,isDraft,updatedAt,labels,author"]);
+    const hit = z.object({ number: z.number(), title: z.string(), url: z.string(), isDraft: z.boolean(), updatedAt: z.string(), labels: z.array(z.object({ name: z.string() })), author: z.object({ login: z.string() }).nullish() }).parse(JSON.parse(out));
+    return this.details({ ...hit, repository: { nameWithOwner: parsed.repo } });
+  }
+
   private async details(hit: SearchHit): Promise<Pr> {
     const cached = this.cache.get(hit.url);
     if (cached?.updatedAt === hit.updatedAt) return cached.pr;
@@ -125,6 +145,20 @@ const PullSchema = z.object({
   deletions: z.number(),
   changed_files: z.number(),
   created_at: z.string(),
+  title: z.string().nullish(),
+  requested_reviewers: z.array(z.object({ login: z.string() })).nullish(),
+  assignees: z.array(z.object({ login: z.string() })).nullish(),
+});
+const ReviewCommentSchema = z.object({
+  id: z.number(),
+  path: z.string(),
+  line: z.number().nullish(),
+  original_line: z.number().nullish(),
+  side: z.enum(["LEFT", "RIGHT"]).nullish(),
+  user: z.object({ login: z.string() }).nullish(),
+  body: z.string(),
+  html_url: z.string(),
+  in_reply_to_id: z.number().nullish(),
 });
 const FileSchema = z.object({
   filename: z.string(),
@@ -137,20 +171,22 @@ const FileSchema = z.object({
 
 export type PrDetails = import("../shared/review").PrDetails;
 
-/** Description, branches and every file's patch for one PR, cached by head SHA (a push changes it). */
+/**
+ * Description, branches and every file's patch for one PR; files are cached by head SHA (a push changes
+ * them), review threads are read fresh each time (others comment without pushing).
+ */
 export class PrDetailsCache {
-  private readonly cache = new Map<string, PrDetails>();
+  private readonly cache = new Map<string, PrDetails["files"]>();
 
   constructor(private readonly run: Gh = gh) {}
 
   async get(repo: string, number: number): Promise<PrDetails> {
     const pull = PullSchema.parse(JSON.parse(await this.run(["api", `repos/${repo}/pulls/${number}`])));
     const key = `${repo}#${number}@${pull.head.sha}`;
-    const hit = this.cache.get(key);
-    if (hit) return hit;
-    const pages = await this.run(["api", "--paginate", "--slurp", `repos/${repo}/pulls/${number}/files?per_page=100`]);
-    const files = z.array(z.array(FileSchema)).parse(JSON.parse(pages)).flat();
-    const details: PrDetails = {
+    const [files, threads] = await Promise.all([this.files(repo, number, key), this.threads(repo, number)]);
+    return {
+      title: pull.title ?? "",
+      requestedReviewers: (pull.requested_reviewers ?? []).map((user) => user.login),
       body: pull.body ?? "",
       author: pull.user?.login ?? "",
       baseRef: pull.base.ref,
@@ -160,16 +196,76 @@ export class PrDetailsCache {
       deletions: pull.deletions,
       changedFiles: pull.changed_files,
       createdAt: pull.created_at,
-      files: files.map((file) => ({
-        path: file.filename,
-        previousPath: file.previous_filename ?? undefined,
-        status: file.status,
-        additions: file.additions,
-        deletions: file.deletions,
-        patch: file.patch ?? undefined,
-      })),
+      files,
+      threads,
     };
-    this.cache.set(key, details);
-    return details;
   }
+
+  private async files(repo: string, number: number, key: string): Promise<PrDetails["files"]> {
+    const hit = this.cache.get(key);
+    if (hit) return hit;
+    const pages = await this.run(["api", "--paginate", "--slurp", `repos/${repo}/pulls/${number}/files?per_page=100`]);
+    const files = z
+      .array(z.array(FileSchema))
+      .parse(JSON.parse(pages))
+      .flat()
+      .map((file) => ({ path: file.filename, previousPath: file.previous_filename ?? undefined, status: file.status, additions: file.additions, deletions: file.deletions, patch: file.patch ?? undefined }));
+    this.cache.set(key, files);
+    return files;
+  }
+
+  private async threads(repo: string, number: number): Promise<PrDetails["threads"]> {
+    const pages = await this.run(["api", "--paginate", "--slurp", `repos/${repo}/pulls/${number}/comments?per_page=100`]).catch(() => "[]");
+    return z
+      .array(z.array(ReviewCommentSchema))
+      .parse(JSON.parse(pages))
+      .flat()
+      .map((comment) => ({
+        id: comment.id,
+        path: comment.path,
+        line: comment.line ?? null,
+        side: comment.side ?? "RIGHT",
+        author: comment.user?.login ?? "",
+        body: comment.body,
+        url: comment.html_url,
+        inReplyTo: comment.in_reply_to_id ?? null,
+      }));
+  }
+}
+
+/** `https://github.com/o/r/pull/12` or `o/r#12` → repo and number. */
+export function parsePrRef(ref: string): { repo: string; number: number } | null {
+  const url = /github\.com\/([\w.-]+\/[\w.-]+)\/pull\/(\d+)/.exec(ref);
+  if (url) return { repo: url[1]!, number: Number(url[2]) };
+  const short = /^([\w.-]+\/[\w.-]+)#(\d+)$/.exec(ref.trim());
+  return short ? { repo: short[1]!, number: Number(short[2]) } : null;
+}
+
+/** Org and team membership for trust rules, cached for an hour. A failed lookup is "not a member". */
+export class GithubMembership {
+  private readonly cache = new Map<string, { at: number; value: boolean }>();
+  constructor(private readonly run: Gh = gh) {}
+
+  inOrg(org: string, login: string) {
+    return this.cached(`org:${org}:${login}`, () => this.run(["api", `orgs/${org}/members/${login}`, "--silent"]).then(() => true));
+  }
+
+  inTeam(org: string, team: string, login: string) {
+    return this.cached(`team:${org}/${team}:${login}`, () =>
+      this.run(["api", `orgs/${org}/teams/${team}/memberships/${login}`]).then((out) => JSON.parse(out).state === "active"),
+    );
+  }
+
+  private async cached(key: string, look: () => Promise<boolean>): Promise<boolean> {
+    const hit = this.cache.get(key);
+    if (hit && Date.now() - hit.at < 3_600_000) return hit.value;
+    const value = await look().catch(() => false);
+    this.cache.set(key, { at: Date.now(), value });
+    return value;
+  }
+}
+
+/** The signed-in GitHub user. */
+export async function whoami(run: Gh = gh): Promise<string> {
+  return z.object({ login: z.string() }).parse(JSON.parse(await run(["api", "user"]))).login;
 }

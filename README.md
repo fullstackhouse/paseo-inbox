@@ -19,7 +19,13 @@ Paseo shows an **Inbox** row in the sidebar. It does nothing until you write `~/
 
 ## Configure
 
-`~/.paseo/inbox.json` (re-read on every poll, no reload needed):
+**Settings → Plugins → paseo-inbox → Inbox** (or "Inbox settings" in the Command Center). The settings live in Paseo's own store on the host:
+- **Running**, how often to check GitHub, how many reviewers run at once, the model, and the mode.
+- **Trust** rules.
+- Local checkouts, one per line.
+- Sources and rules, as JSON.
+
+Until settings hold any sources or rules, a legacy `~/.paseo/inbox.json` applies, and the screen offers to import it. The shape is the same:
 
 ```jsonc
 {
@@ -62,6 +68,27 @@ Inbox agents get one MCP tool, `inbox_review_draft`. It takes a verdict, a confi
 - **Your comments:** tap any diff line, or "Comment on the whole file", to add your own or to ask the reviewer about it. Regrade any comment (blocker, minor, nit, note).
 - **Talking to the reviewer:** "Ask about this" sends the agent a quoted message and opens it. Its changes arrive through `inbox_review_revise`, which never touches comments you wrote or decided on.
 - **Posting:** pick the verdict (a hint warns when it disagrees with the blockers still standing), then post. The bottom bar posts the review after a confirm, with the inline comments you didn't drop. If the PR has new commits since the draft, Post is refused: rerun to draft again.
+
+## Trust
+
+Trust decides one thing: whether a review run may execute commands. Rules name people, as Cerber's do: `@login` (a `*` glob within the name), `@org/team`, `@org/*`; a leading `!` denies. Denials win, then the first grant. No match, and no rules at all, means untrusted. Repos can't be trusted, because a repo takes PRs from anyone.
+
+An untrusted run is **read-only**:
+- It runs in Claude's asking mode, and the inbox answers every prompt: reading files and the inbox tools pass, everything else (Bash, edits, web, other MCP servers) is denied.
+- Its environment holds no GitHub or git credentials and no ssh identities.
+
+The reviewer reads the PR through `inbox_pr`: description, diff, and other reviewers' comments. This is credential hygiene, not a sandbox. The repo's own Claude hooks still run in the checkout.
+
+## Already raised, handoff, preview, pasting a link
+
+- **Other reviewers' comments** show in the diff where they sit. When the reviewer's finding repeats one, it's marked *already raised* and held back. "Reply in thread" posts it as a reply there instead, and "Post as new" posts it as a new comment.
+- **Preview** shows exactly what Post sends: the event, the body, inline comments, replies, and what's held or folded. **Edit text** replaces the composed body until you **Reset**.
+- **Hand off** requests someone else's review, withdraws yours, and leaves a note naming them. Optionally it sends your draft as a COMMENT review, never as an approval or a request for changes.
+- **Paste a PR link** at the top of the Inbox to review any PR with the manual rule (`manualRule`, default the first rule).
+
+## Notifications
+
+Plugins can't send notifications yet. Paseo already notifies when a reviewer agent finishes, and the inbox adds a **Review draft ready → Open review** card to that agent's chat, so the notification lands one tap from the review.
 
 ## The write guard
 

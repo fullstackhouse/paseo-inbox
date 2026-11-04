@@ -2,15 +2,19 @@ import type { PaseoApi } from "@getpaseo/client";
 import type { PluginServerContext } from "@getpaseo/plugin/server";
 import { installBridge } from "./server/bridge";
 import { openInBrowser } from "./server/open";
-import { GithubSource, postPullReview, PrDetailsCache } from "./server/github";
+import { mkdirSync } from "node:fs";
+import { join } from "node:path";
+import { ghWithInput, GithubMembership, GithubSource, postPullReview, PrDetailsCache, whoami } from "./server/github";
 import { guardEnv, installShims, RUN_ENV } from "./server/guard";
 import { Inbox, type StartRequest } from "./server/inbox";
 import { listen } from "./server/listener";
-import { postDraft } from "./server/post";
+import { handoffDraft, postDraft, previewDraft } from "./server/post";
 import { ReviewStore } from "./server/reviews";
-import { dataDir, loadConfig, StateStore } from "./server/store";
-import { callTool, isInboxPermission, PREAPPROVED } from "./server/tools";
-import { listInbox, pollNow, runNow, skipRun } from "./shared/inbox";
+import { configPath, dataDir, expandCheckouts, loadConfig, StateStore } from "./server/store";
+import { callTool, permissionAnswer, PREAPPROVED } from "./server/tools";
+import { addPr, isUnconfigured, listInbox, pollNow, runNow, skipRun, type Config } from "./shared/inbox";
+import { inboxSettings, readLegacyConfig } from "./shared/settings";
+import { decideTrust } from "./shared/trust";
 import {
   addHumanComment,
   addReviewComment,
@@ -19,11 +23,15 @@ import {
   discussReview,
   getPrDetails,
   getReview,
+  handoffReview,
   INSTRUCTIONS,
   MCP_SERVER,
   openExternal,
   patchPrint,
   postReview,
+  previewReview,
+  prPeople,
+  setReviewBody,
   setFileViewed,
   setReviewVerdict,
   severityFromRpc,
@@ -35,6 +43,9 @@ import {
 
 export const RUN_LABEL = "inbox.run";
 export const PR_LABEL = "inbox.pr";
+/** Env marker on a session the inbox started read-only (its PR's author isn't trusted). */
+const UNTRUSTED_ENV = "PASEO_INBOX_UNTRUSTED";
+export const REVIEW_CARD = "inbox-review";
 
 export default function contribute(server: PluginServerContext) {
   const dir = dataDir();
@@ -44,30 +55,69 @@ export default function contribute(server: PluginServerContext) {
   const mcp = installBridge(dir);
   const github = new GithubSource();
   const prDetails = new PrDetailsCache();
+  const membership = new GithubMembership();
+  const details = (repo: string, number: number) => prDetails.get(repo, number);
+  const ghJson = (args: string[], body: unknown) => ghWithInput(args, JSON.stringify(body));
+  // An empty gh config for untrusted runs: gh there has no account to speak for.
+  const emptyGh = join(dir, "untrusted-gh");
+  mkdirSync(emptyGh, { recursive: true });
+
+  // Settings live in Paseo's own store; until they hold any sources or rules, a legacy inbox.json applies.
+  const settings = server.registerSettings(inboxSettings);
+  let fromSettings: Config | null = null;
+  let settingsError: string | null = null;
+  const take = (state: Awaited<ReturnType<typeof settings.read>>) => {
+    fromSettings = state.status === "ready" ? state.values : null;
+    settingsError = state.status === "invalid" ? state.error : null;
+  };
+  void settings.read().then(take).catch(() => undefined);
+  // A settings change applies now: poll again rather than waiting for the next tick.
+  const unsubscribe = settings.subscribe((state) => {
+    take(state);
+    // Deferred: `inbox` is created further down this function, so it exists by the time this fires.
+    setTimeout(() => void inbox.poll().catch(() => undefined), 0);
+  });
+  const currentConfig = (): Config | null => {
+    if (settingsError) throw new Error(`Settings are invalid: ${settingsError}`);
+    if (fromSettings && !isUnconfigured(fromSettings)) return expandCheckouts(fromSettings);
+    return loadConfig();
+  };
   // The daemon session behind `paseo` lives as long as this subprocess; any hook or handler hands it over.
   let paseo: PaseoApi | null = null;
   const capture = (api: PaseoApi) => {
     paseo ??= api;
   };
 
-  const start = async ({ run, pr, cwd, provider, mode, prompt }: StartRequest) => {
+  const start = async ({ run, pr, cwd, provider, mode, prompt, trusted }: StartRequest) => {
     if (!paseo) throw new Error("No Paseo session yet");
+    // An untrusted run asks before every tool, and the permission hook below answers: reads yes,
+    // everything else no. Claude's "default" mode is the one that asks.
+    if (!trusted && !provider.startsWith("claude")) throw new Error("Untrusted runs need a Claude provider (they rely on its asking mode); trust the author or switch the model");
     const created = await paseo.agents.create({
       cwd,
       worktree: { mode: "checkout-pr", prNumber: pr.number },
       background: true,
-      title: `Inbox · ${run.rule} · ${pr.repo}#${pr.number}`,
-      config: { provider, modeId: mode },
+      title: `Inbox · ${run.rule} · ${pr.repo}#${pr.number}${trusted ? "" : " · read-only"}`,
+      config: { provider, modeId: trusted ? mode : "default" },
       labels: { [RUN_LABEL]: run.id, [PR_LABEL]: pr.url },
-      env: { [RUN_ENV]: run.id },
-      prompt,
+      env: { [RUN_ENV]: run.id, ...(trusted ? {} : { [UNTRUSTED_ENV]: "1" }) },
+      prompt: trusted ? prompt : `${prompt}\n\nThis run is read-only: ${pr.author ? `@${pr.author}` : "the author"} isn't on your trust list, so you can read files and use the inbox tools but can't run commands.`,
     });
     await created.refresh().catch(() => null);
     return { agentId: created.id, workspaceId: created.workspaceId };
   };
 
-  const inbox = new Inbox({ loadConfig: () => loadConfig(), search: (query) => github.search(query), start,
+  const inbox = new Inbox({
+    loadConfig: currentConfig,
+    search: (query) => github.search(query),
+    start,
     ready: () => paseo !== null,
+    trust: (pr, config) => decideTrust(pr.author, config.trust, membership),
+    announce: async (run, headline) => {
+      if (!paseo || !run.agentId) return;
+      const pr = inbox.item(run.itemKey)?.pr;
+      await paseo.agents.ref(run.agentId).timeline.append({ type: "plugin", id: REVIEW_CARD, kind: REVIEW_CARD, version: 1, data: { runId: run.id, headline, title: pr?.title ?? run.itemKey, pr: run.itemKey } });
+    },
     archive: async (workspaceId) => {
       await paseo?.workspaces.archive(workspaceId);
     }, load: () => store.load(), save: (state) => store.save(state) });
@@ -80,11 +130,17 @@ export default function contribute(server: PluginServerContext) {
     const preapproved = [...(config.toolPolicy?.preapproved ?? []), ...PREAPPROVED];
     return { ...request, config: { ...config, mcpServers: { ...config.mcpServers, [MCP_SERVER]: mcp }, toolPolicy: { preapproved } } };
   });
-  // Asking modes prompt even for preapproved MCP tools; these only save a draft locally.
+  // Asking modes prompt even for preapproved MCP tools; these only read the PR or save a draft locally.
+  // For a read-only (untrusted) run this hook is the gate: reads and inbox tools pass, the rest is denied.
   server.on("agent.permission_requested", async ({ agent, request }, { paseo: api }) => {
     capture(api);
-    if (!inbox.isInboxAgent(agent.id) || !isInboxPermission(request)) return;
-    await api.agents.ref(agent.id).respondToPermission({ requestId: request.id, response: { behavior: "allow" } });
+    if (!inbox.isInboxAgent(agent.id)) return;
+    const answer = permissionAnswer(request, inbox.runForAgent(agent.id)?.trusted);
+    if (!answer) return;
+    await api.agents.ref(agent.id).respondToPermission({
+      requestId: request.id,
+      response: answer === "allow" ? { behavior: "allow" } : { behavior: "deny", message: "This review run is read-only: the PR's author isn't on the trust list. Read the files and use inbox_pr instead." },
+    });
   });
 
   // The write guard: inbox agents get `gh`/`git` shims first on PATH, on create and on every resume.
@@ -92,7 +148,31 @@ export default function contribute(server: PluginServerContext) {
     capture(api);
     const marked = request.env[RUN_ENV] || inbox.isInboxAgent(request.agentId);
     if (!marked) return;
-    return { ...request, env: guardEnv({ ...request.env, [RUN_ENV]: request.env[RUN_ENV] || "resumed" }, shimDir) };
+    const env = guardEnv({ ...request.env, [RUN_ENV]: request.env[RUN_ENV] || "resumed" }, shimDir);
+    const untrusted = request.env[UNTRUSTED_ENV] === "1" || inbox.runForAgent(request.agentId)?.trusted === false;
+    // Credential hygiene for read-only runs (Cerber §14.3), not a sandbox: no gh account, no git
+    // credential helpers or prompts, no ssh identities.
+    return {
+      ...request,
+      env: untrusted
+        ? {
+            ...env,
+            [UNTRUSTED_ENV]: "1",
+            GH_CONFIG_DIR: emptyGh,
+            GH_TOKEN: "",
+            GITHUB_TOKEN: "",
+            GH_ENTERPRISE_TOKEN: "",
+            GITHUB_ENTERPRISE_TOKEN: "",
+            GIT_CONFIG_NOSYSTEM: "1",
+            GIT_CONFIG_GLOBAL: "/dev/null",
+            GIT_TERMINAL_PROMPT: "0",
+            GIT_ASKPASS: "",
+            SSH_ASKPASS: "",
+            SSH_AUTH_SOCK: "",
+            GIT_SSH_COMMAND: "ssh -F /dev/null -o BatchMode=yes -o IdentitiesOnly=yes -o IdentityFile=/dev/null",
+          }
+        : env,
+    };
   });
   server.on("agent.turn_ended", ({ agent, outcome }, { paseo: api }) => {
     capture(api);
@@ -138,10 +218,14 @@ export default function contribute(server: PluginServerContext) {
     reviews.save(next);
     return next;
   };
-  server.handle(updateReviewComment, ({ runId, commentId, status, body, severity }, { paseo: api }) => {
+  server.handle(updateReviewComment, ({ runId, commentId, status, body, severity, reply, unraise }, { paseo: api }) => {
     capture(api);
     return editDraft(runId, (draft) =>
-      updateComment(draft, commentId, body !== undefined ? { body } : severity !== undefined ? { severity: severityFromRpc(severity) } : { status: status ?? "kept" }),
+      updateComment(
+        draft,
+        commentId,
+        body !== undefined ? { body } : severity !== undefined ? { severity: severityFromRpc(severity) } : reply !== undefined ? { reply } : unraise ? { unraise: true } : { status: status ?? "kept" },
+      ),
     );
   });
   server.handle(addReviewComment, ({ runId, severity, ...comment }, { paseo: api }) => {
@@ -180,16 +264,60 @@ export default function contribute(server: PluginServerContext) {
     await api.agents.ref(agentId).send(message);
     return { ok: true as const };
   });
-  // The only path from a review draft to GitHub: the Inbox screen's Post button.
+  // The only paths from a review draft to GitHub: buttons on the review screen.
   server.handle(postReview, ({ runId }, { paseo: api }) => {
     capture(api);
-    return postDraft(inbox, reviews, runId, (repo, number, payload) => postPullReview(repo, number, payload), (repo, number) => prDetails.get(repo, number));
+    return postDraft(inbox, reviews, runId, (repo, number, payload) => postPullReview(repo, number, payload), details, undefined, ghJson);
+  });
+  server.handle(handoffReview, ({ runId, to, note, sendDraft }, { paseo: api }) => {
+    capture(api);
+    return handoffDraft(inbox, reviews, runId, { to, note, sendDraft }, { details, ghJson, me: () => whoami(), post: (repo, number, payload) => postPullReview(repo, number, payload) });
+  });
+  server.handle(previewReview, ({ runId }, { paseo: api }) => {
+    capture(api);
+    return previewDraft(inbox, reviews, runId, details);
+  });
+  server.handle(setReviewBody, ({ runId, body }, { paseo: api }) => {
+    capture(api);
+    return editDraft(runId, (draft) => {
+      if (draft.postedUrl) throw new Error("Already posted");
+      const { bodyOverride: _old, ...rest } = draft;
+      return body === null || !body.trim() ? rest : { ...rest, bodyOverride: body };
+    });
+  });
+  server.handle(prPeople, async ({ itemKey }, { paseo: api }) => {
+    capture(api);
+    const item = inbox.item(itemKey);
+    if (!item) throw new Error(`Unknown PR ${itemKey}`);
+    const [me, live, collaborators] = await Promise.all([
+      whoami().catch(() => ""),
+      details(item.pr.repo, item.pr.number).catch(() => null),
+      github.collaborators(item.pr.repo).catch(() => [] as string[]),
+    ]);
+    const people = [...new Set([...(live?.requestedReviewers ?? []), ...(live?.threads.map((thread) => thread.author) ?? []), ...collaborators])].filter(
+      (login) => login && login.toLowerCase() !== me.toLowerCase() && login.toLowerCase() !== item.pr.author.toLowerCase() && !/\[bot\]$/.test(login),
+    );
+    return { me, people };
+  });
+  server.handle(addPr, async ({ ref }, { paseo: api }) => {
+    capture(api);
+    const pr = await github.one(ref);
+    const run = await inbox.addManual(pr);
+    return { itemKey: pr.key, runId: run.id };
+  });
+  server.handle(readLegacyConfig, (_input, { paseo: api }) => {
+    capture(api);
+    try {
+      return { path: configPath(), config: loadConfig(), error: null };
+    } catch (error) {
+      return { path: configPath(), config: null, error: error instanceof Error ? error.message : String(error) };
+    }
   });
 
   const listening = listen(dir, {
     "/instructions": async () => ({ instructions: INSTRUCTIONS }),
     "/tools": async () => ({ tools: TOOLS }),
-    "/call": async ({ agentId, name, arguments: args }) => callTool(inbox, reviews, agentId ?? null, name, args),
+    "/call": async ({ agentId, name, arguments: args }) => callTool(inbox, reviews, agentId ?? null, name, args, undefined, details),
   });
 
   // Poll on the configured interval; the config is re-read every tick, so edits apply without a reload.
@@ -197,20 +325,21 @@ export default function contribute(server: PluginServerContext) {
   let stopped = false;
   const tick = async () => {
     await inbox.poll().catch((error) => console.error("inbox poll failed", error));
-    if (!stopped) timer = setTimeout(tick, safeInterval() * 1000);
+    if (!stopped) timer = setTimeout(tick, safeInterval(currentConfig) * 1000);
   };
   timer = setTimeout(tick, 5_000);
 
   return async () => {
     stopped = true;
     if (timer) clearTimeout(timer);
+    unsubscribe();
     (await listening).close();
   };
 }
 
-function safeInterval(): number {
+function safeInterval(config: () => Config | null): number {
   try {
-    return loadConfig()?.pollSeconds ?? 300;
+    return config()?.pollSeconds ?? 300;
   } catch {
     return 300;
   }

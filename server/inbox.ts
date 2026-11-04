@@ -7,6 +7,8 @@ export interface StartRequest {
   provider: string;
   mode: string;
   prompt: string;
+  /** Untrusted runs only read: no commands, no edits, no GitHub or git credentials. */
+  trusted: boolean;
 }
 
 export interface InboxDeps {
@@ -15,6 +17,10 @@ export interface InboxDeps {
   start: (request: StartRequest) => Promise<{ agentId: string; workspaceId?: string | null }>;
   load: () => State;
   save: (state: State) => void;
+  /** Whether the PR's author is on the trust list; untrusted when absent. */
+  trust?: (pr: Pr, config: Config) => Promise<{ trusted: boolean; because: string }>;
+  /** Tells the reviewer agent's chat a draft is ready (the "Open review" card). */
+  announce?: (run: Run, headline: string) => Promise<void>;
   /** Archives an inbox agent's workspace (and its worktree) once the human is done with it. */
   archive?: (workspaceId: string) => Promise<void>;
   /** False until the plugin has a Paseo session to create agents with; queued runs wait. */
@@ -65,7 +71,11 @@ export class Inbox {
       return;
     }
     if (!config) {
-      this.errors = ["No inbox.json yet: create it to add sources and rules (see the README)."];
+      this.errors = ["Nothing configured yet: open Settings → Inbox to add sources and rules."];
+      return;
+    }
+    if (!config.enabled) {
+      this.errors = ["Paused in Settings → Inbox."];
       return;
     }
     const results: Record<string, Pr[]> = {};
@@ -102,8 +112,9 @@ export class Inbox {
       }
       this.commit(setRun(this.state, run.id, { state: "running", reason: undefined }, this.now()));
       try {
-        const started = await this.deps.start({ run, pr, cwd, provider: providerFor(rule, config), mode: modeFor(rule, config), prompt: renderPrompt(rule, pr) });
-        this.commit(setRun(this.state, run.id, { agentId: started.agentId, workspaceId: started.workspaceId ?? undefined }, this.now()));
+        const trust = this.deps.trust ? await this.deps.trust(pr, config) : { trusted: false, because: "no trust check" };
+        const started = await this.deps.start({ run, pr, cwd, provider: providerFor(rule, config), mode: modeFor(rule, config), prompt: renderPrompt(rule, pr), trusted: trust.trusted });
+        this.commit(setRun(this.state, run.id, { agentId: started.agentId, workspaceId: started.workspaceId ?? undefined, trusted: trust.trusted, reason: trust.trusted ? undefined : `read-only run: ${trust.because}` }, this.now()));
       } catch (error) {
         // A rate limit passes on its own: keep the run queued for the next poll instead of failing it.
         const limited = /rate limit/i.test(message(error));
@@ -171,7 +182,32 @@ export class Inbox {
   /** A review draft was saved: the human has something to decide on, even if the agent is still finishing. */
   markDrafted(runId: string, reason: string): void {
     this.commit(setRun(this.state, runId, { state: "needs-decision", reason }, this.now()));
+    const run = this.run(runId);
+    if (run) void this.deps.announce?.(run, reason.replace(/^review drafted: /, "")).catch(() => undefined);
     void this.afterChange();
+  }
+
+  markHandedOff(runId: string, to: string, url: string): void {
+    this.commit(setRun(this.state, runId, { state: "done", reason: `handed off to @${to}: ${url}` }, this.now()));
+  }
+
+  /** A PR pasted by URL: tracked under the "manual" source and queued with the manual rule now. */
+  async addManual(pr: Pr): Promise<Run> {
+    const config = this.deps.loadConfig();
+    if (!config) throw new Error("Nothing configured yet: add a rule in Settings → Inbox first");
+    const rule = config.rules.find((candidate) => candidate.name === config.manualRule) ?? config.rules[0];
+    if (!rule) throw new Error("No rule to run: add one in Settings → Inbox");
+    const now = this.now();
+    const prior = this.state.items[pr.key];
+    this.commit({ ...this.state, items: { ...this.state.items, [pr.key]: { pr, sources: [...new Set([...(prior?.sources ?? []), "manual"])], lastSeenAt: now } } });
+    this.commit(requeue(this.state, config, pr.key, rule.name, now));
+    const id = this.state.runs.find((run) => run.itemKey === pr.key && run.rule === rule.name && run.version === pr.headSha)!.id;
+    // Under "manual", so a poll of the rule's own source never closes it for being absent there.
+    this.commit(setRun(this.state, id, { source: "manual" }, now));
+    const checkout = Object.keys(config.checkouts).some((repo) => repo.toLowerCase() === pr.repo.toLowerCase());
+    if (!checkout) this.commit(setRun(this.state, id, { state: "no-checkout", reason: `set checkouts["${pr.repo}"] in Settings → Inbox` }, now));
+    await this.dispatch(config);
+    return this.run(id)!;
   }
 
   markPosted(runId: string, url: string): void {
