@@ -86,7 +86,10 @@ export class Inbox {
 
   private async dispatch(config: Config): Promise<void> {
     if (this.deps.ready && !this.deps.ready()) return;
-    for (const run of startable(this.state, config.maxConcurrent)) {
+    // Re-pick after each start: a run that fails to start frees its slot for the next queued one.
+    const tried = new Set<string>();
+    for (let run = startable(this.state, config.maxConcurrent).find((candidate) => !tried.has(candidate.id)); run; run = startable(this.state, config.maxConcurrent).find((candidate) => !tried.has(candidate.id))) {
+      tried.add(run.id);
       // Another dispatch may have taken it while this one awaited.
       if (this.state.runs.find((candidate) => candidate.id === run.id)?.state !== "queued") continue;
       if (this.state.runs.filter((candidate) => candidate.state === "running").length >= config.maxConcurrent) break;

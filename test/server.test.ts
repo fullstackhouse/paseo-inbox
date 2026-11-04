@@ -77,6 +77,17 @@ describe("Inbox", () => {
     expect(saved().runs[0]!.state).toBe("running");
   });
 
+  it("starts the next queued run in the same poll when one fails to start", async () => {
+    const { inbox, saved } = harness({ review: [pr({ number: 1 }), pr({ number: 2 })] }, {
+      start: async ({ pr: target }) => {
+        if (target.number === 1) throw new Error("Unable to resolve GitHub repository");
+        return { agentId: "agent-2" };
+      },
+    });
+    await inbox.poll();
+    expect(saved().runs.map((run) => run.state)).toEqual(["failed", "running"]);
+  });
+
   it("waits with queued runs until a Paseo session exists", async () => {
     let ready = false;
     const { inbox, started } = harness({ review: [pr()] }, { ready: () => ready });
