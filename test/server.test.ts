@@ -113,7 +113,7 @@ describe("Inbox", () => {
   it("explains a missing or invalid config", async () => {
     const missing = harness({}, { loadConfig: () => null });
     await missing.inbox.poll();
-    expect(missing.inbox.view().errors[0]).toMatch(/^No inbox.json yet/);
+    expect(missing.inbox.view().errors[0]).toMatch(/^Nothing configured yet/);
     const invalid = harness({}, { loadConfig: () => { throw new Error("rules.0.prompt: Required"); } });
     await invalid.inbox.poll();
     expect(invalid.inbox.view().errors).toEqual(["inbox.json is invalid: rules.0.prompt: Required"]);

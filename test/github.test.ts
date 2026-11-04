@@ -66,15 +66,16 @@ describe("PrDetailsCache", () => {
 
   it("reads description and every file page, and refetches files only after a push", async () => {
     let sha = "abc";
-    const run = vi.fn(async (args: string[]) => JSON.stringify(args.includes("--paginate") ? files : pull(sha)));
+    const run = vi.fn(async (args: string[]) => JSON.stringify(args.some((arg) => arg.includes("/files")) ? files : args.some((arg) => arg.includes("/comments")) ? [[]] : pull(sha)));
     const cache = new PrDetailsCache(run);
     const details = await cache.get("acme/shop", 7);
     expect(details).toMatchObject({ body: "## Why", author: "ola", baseRef: "main", headRef: "feat/x", headSha: "abc", changedFiles: 1 });
     expect(details.files.map((file) => [file.path, file.patch !== undefined])).toEqual([["src/a.tsx", true], ["logo.png", false]]);
     await cache.get("acme/shop", 7);
-    expect(run).toHaveBeenCalledTimes(3);
+    // pull + files + threads; a second read skips files (same head) but re-reads threads.
+    expect(run).toHaveBeenCalledTimes(5);
     sha = "def";
     await cache.get("acme/shop", 7);
-    expect(run).toHaveBeenCalledTimes(5);
+    expect(run).toHaveBeenCalledTimes(8);
   });
 });

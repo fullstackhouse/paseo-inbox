@@ -15,6 +15,11 @@ Paseo plugin: GitHub PR searches → rules → one agent per match, with a PATH 
 - Review screen: `client/ReviewScreen.tsx` (header, sticky tabs, post bar, prev/next via `reviewQueue`), `FileDiff` (`shared/diff.ts` `parsePatch` + `anchors`), `CommentCard` (keep/edit/drop through RPC `inbox.review_comment` → `updateComment`), `Markdown` (`shared/markdown.ts`, native Text). PR body and file patches come from RPC `inbox.pr_get` → `PrDetailsCache` (`gh api pulls/N` + `/files --paginate --slurp`, cached per head SHA). Screens get no `openScreen` prop, so `client/nav.ts` holds the client's.
 - `client/`: `InboxScreen` (grouped runs, actions), `useInbox` (RPC polling); `index.client.tsx` registers the screen and a sidebar row with the needs-decision count.
 
+- Settings: `shared/settings.ts` (`defineSettings`, schema = `ConfigSchema`), registered on the server (read + subscribe only; servers can't write). `client/SettingsScreen.tsx` is under Settings → Plugins → paseo-inbox. Settings win once they hold sources or rules, otherwise `inbox.json`. The screen imports it.
+- Trust: `shared/trust.ts` (`parseTrust`, `decideTrust`, `untrustedAllows`), membership via `GithubMembership`. Untrusted = `modeId: "default"` + `permissionAnswer` (server/tools.ts) denying all but reads and inbox tools + credential-free env in `session_open`.
+- `inbox_pr` (`prContext`): description, diff, others' threads with ids. Comments carry `raised` (thread id) and `reply`. `composeReview` holds back raised comments, and `postDraft` posts replies after the review.
+- Handoff (`handoffDraft`), preview and body override (`previewDraft`, `bodyOverride`), pasted PRs (`Inbox.addManual`, source "manual"), the "Open review" timeline card (`announce` → `timeline.append`, `client/ReviewCard.tsx`).
+
 ## Load-bearing facts (Paseo 0.12)
 
 - The plugin has no `paseo` handle until a hook or RPC hands one over; polling runs without it, dispatch waits (`ready`).

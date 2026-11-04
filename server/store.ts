@@ -15,11 +15,12 @@ export const configPath = () => process.env.PASEO_INBOX_CONFIG ?? join(paseoHome
 
 const expandHome = (path: string) => (path === "~" || path.startsWith("~/") ? join(homedir(), path.slice(1)) : path);
 
-/** The config, or null when the file doesn't exist yet. Throws with the zod message when it is invalid. */
+export const expandCheckouts = (config: Config): Config => ({ ...config, checkouts: Object.fromEntries(Object.entries(config.checkouts).map(([repo, dir]) => [repo, expandHome(dir)])) });
+
+/** The legacy inbox.json, or null when it doesn't exist. Throws with the zod message when it is invalid. */
 export function loadConfig(path = configPath()): Config | null {
   if (!existsSync(path)) return null;
-  const config = ConfigSchema.parse(JSON.parse(readFileSync(path, "utf8")));
-  return { ...config, checkouts: Object.fromEntries(Object.entries(config.checkouts).map(([repo, dir]) => [repo, expandHome(dir)])) };
+  return expandCheckouts(ConfigSchema.parse(JSON.parse(readFileSync(path, "utf8"))));
 }
 
 /** Inbox state in one JSON file. Single writer (the plugin process), written atomically. */

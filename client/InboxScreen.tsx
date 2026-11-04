@@ -1,8 +1,8 @@
 import type { PluginScreenProps } from "@getpaseo/plugin/client";
 import { useRpc } from "@getpaseo/plugin/client";
 import { useMemo, useState } from "react";
-import { Pressable, ScrollView, Text, View } from "react-native";
-import { groupRuns, runNow, skipRun, type Run, type RunState } from "../shared/inbox";
+import { Pressable, ScrollView, Text, TextInput, View } from "react-native";
+import { addPr, groupRuns, runNow, skipRun, type Run, type RunState } from "../shared/inbox";
 import { openScreen } from "./nav";
 import { REVIEW_SCREEN } from "./ReviewScreen";
 import { ago, Chip, MONO, Pill, verdictColor } from "./ui";
@@ -31,6 +31,9 @@ export function InboxScreen({ theme, layout, navigation }: PluginScreenProps) {
   const { view, error, polling, refresh, pollNow } = useInbox();
   const rerun = useRpc(runNow);
   const dismiss = useRpc(skipRun);
+  const add = useRpc(addPr);
+  const [link, setLink] = useState("");
+  const [adding, setAdding] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [showSettled, setShowSettled] = useState(false);
@@ -51,6 +54,20 @@ export function InboxScreen({ theme, layout, navigation }: PluginScreenProps) {
       setActionError(caught instanceof Error ? caught.message : String(caught));
     } finally {
       setBusy(null);
+    }
+  };
+
+  const submitLink = async () => {
+    setAdding(true);
+    setActionError(null);
+    try {
+      await add({ ref: link.trim() });
+      setLink("");
+      await refresh();
+    } catch (caught) {
+      setActionError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setAdding(false);
     }
   };
 
@@ -101,6 +118,19 @@ export function InboxScreen({ theme, layout, navigation }: PluginScreenProps) {
       <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
         <Text style={{ ...muted, flex: 1 }}>{view?.lastPollAt ? `Polled ${ago(view.lastPollAt)} ago` : "Not polled yet"}</Text>
         <Chip theme={theme} label={polling ? "Polling…" : "Poll now"} disabled={polling} onPress={() => void pollNow()} />
+      </View>
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+        <TextInput
+          value={link}
+          onChangeText={setLink}
+          placeholder="Paste a PR link to review it"
+          placeholderTextColor={theme.colors.foregroundMuted}
+          autoCapitalize="none"
+          autoCorrect={false}
+          onSubmitEditing={() => link.trim() && void submitLink()}
+          style={{ flex: 1, color: theme.colors.foreground, fontSize: 14, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 8 }}
+        />
+        <Chip theme={theme} label={adding ? "Adding…" : "Review"} disabled={adding || !link.trim()} onPress={() => void submitLink()} />
       </View>
       {[error, actionError, ...(view?.errors ?? [])].filter(Boolean).map((message) => (
         <Text key={message} style={{ color: theme.colors.statusDanger, fontSize: 13 }}>{message}</Text>

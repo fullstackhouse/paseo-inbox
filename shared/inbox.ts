@@ -36,8 +36,19 @@ export const ConfigSchema = z.object({
   checkouts: z.record(z.string(), z.string()).default({}),
   sources: z.record(z.string(), z.object({ github: z.string().min(1) })).default({}),
   rules: z.array(RuleSchema).default([]),
+  /** Polling and new runs stop while false; drafts already made stay readable and postable. */
+  enabled: z.boolean().default(true),
+  /**
+   * Who may have their PR's commands run (Cerber's rules): `@login` (globs within the name),
+   * `@org/team`, `@org/*`, `!` to deny. Denials win; no match means untrusted. Untrusted runs only read.
+   */
+  trust: z.array(z.string()).default([]),
+  /** The rule a pasted PR URL runs; the first rule when unset. */
+  manualRule: z.string().optional(),
 });
 export type Config = z.infer<typeof ConfigSchema>;
+/** True when nothing is configured yet (the defaults), so a legacy inbox.json may apply instead. */
+export const isUnconfigured = (config: Config) => !Object.keys(config.sources).length && !config.rules.length;
 
 // ---------- Items and runs ----------
 
@@ -74,6 +85,8 @@ export const RunSchema = z.object({
   state: RunStateSchema,
   agentId: z.string().optional(),
   workspaceId: z.string().optional(),
+  /** Whether the PR's author was trusted when the run started: untrusted runs only read. */
+  trusted: z.boolean().optional(),
   reason: z.string().optional(),
   updatedAt: z.string(),
 });
@@ -288,6 +301,8 @@ export type InboxView = z.infer<typeof InboxViewSchema>;
 export const listInbox = defineRpc({ name: "inbox.list", input: z.object({}), output: InboxViewSchema });
 export const runNow = defineRpc({ name: "inbox.run_now", input: RunKeySchema, output: z.object({ ok: z.literal(true) }) });
 export const skipRun = defineRpc({ name: "inbox.skip", input: RunKeySchema, output: z.object({ ok: z.literal(true) }) });
+/** Queue a review for any PR by URL (or owner/repo#123), with the manual rule. */
+export const addPr = defineRpc({ name: "inbox.add_pr", input: z.object({ ref: z.string().min(1) }), output: z.object({ itemKey: z.string(), runId: z.string() }) });
 export const pollNow = defineRpc({ name: "inbox.poll_now", input: z.object({}), output: InboxViewSchema });
 
 // ---------- View helpers ----------

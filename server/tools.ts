@@ -1,5 +1,6 @@
 import type { AgentPermissionRequest, McpToolRef } from "@getpaseo/protocol/agent-types";
-import { draftHeadline, MCP_SERVER, replaceDraft, REVIEW_TOOL, ReviewInputSchema, REVISE_TOOL, ReviseInputSchema, reviseDraft, TOOLS } from "../shared/review";
+import { draftHeadline, MCP_SERVER, PR_TOOL, prContext, replaceDraft, REVIEW_TOOL, type PrDetails, ReviewInputSchema, REVISE_TOOL, ReviseInputSchema, reviseDraft, TOOLS } from "../shared/review";
+import { untrustedAllows } from "../shared/trust";
 import type { Inbox } from "./inbox";
 import type { ReviewStore } from "./reviews";
 
@@ -11,15 +12,39 @@ export function isInboxPermission(request: Pick<AgentPermissionRequest, "kind" |
   return request.name === "CodexMcpElicitation" && request.metadata?.serverName === MCP_SERVER;
 }
 
+/**
+ * How the inbox answers a permission prompt from one of its agents: inbox tools always pass; for a
+ * read-only (untrusted) run, reading passes and everything else is denied; otherwise it's not ours to
+ * answer (null), and the agent's own mode decides.
+ */
+export function permissionAnswer(request: Pick<AgentPermissionRequest, "kind" | "name" | "metadata">, trusted: boolean | undefined): "allow" | "deny" | null {
+  if (isInboxPermission(request)) return "allow";
+  if (trusted !== false) return null;
+  return request.kind === "tool" && untrustedAllows(request.name, MCP_SERVER) ? "allow" : "deny";
+}
+
 export interface ToolResult {
   text: string;
   isError?: boolean;
 }
 
-export function callTool(inbox: Inbox, reviews: ReviewStore, agentId: string | null, name: string, args: unknown, now = new Date().toISOString()): ToolResult {
+export async function callTool(
+  inbox: Inbox,
+  reviews: ReviewStore,
+  agentId: string | null,
+  name: string,
+  args: unknown,
+  now = new Date().toISOString(),
+  details?: (repo: string, number: number) => Promise<PrDetails>,
+): Promise<ToolResult> {
   try {
     const run = agentId ? inbox.runForAgent(agentId) : null;
-    if (!run) throw new Error("Only agents started by paseo-inbox can save a review draft");
+    if (!run) throw new Error("Only agents started by paseo-inbox can use the inbox tools");
+    if (name === PR_TOOL) {
+      const pr = inbox.item(run.itemKey)?.pr;
+      if (!pr || !details) throw new Error("The PR isn't available");
+      return { text: prContext(pr, await details(pr.repo, pr.number)) };
+    }
     const previous = reviews.get(run.id);
     if (name === REVIEW_TOOL) {
       const draft = replaceDraft(previous, ReviewInputSchema.parse(args), run, now);

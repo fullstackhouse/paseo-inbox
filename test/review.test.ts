@@ -158,19 +158,19 @@ function setup() {
   return { inbox, reviews, state: () => state };
 }
 const raw = { verdict: "request-changes", confidence: 80, summary: "s", comments: [{ path: PATH, line: 11, severity: "blocker", body: "b" }, { path: PATH, line: 99, body: "off" }] };
-const details = (headSha: string): PrDetails => ({ body: "", author: "ola", baseRef: "main", headRef: "x", headSha, additions: 1, deletions: 0, changedFiles: 1, createdAt: NOW, files: files.map((file) => ({ status: "modified", additions: 1, deletions: 0, ...file })) });
+const details = (headSha: string): PrDetails => ({ body: "", author: "ola", baseRef: "main", headRef: "x", headSha, additions: 1, deletions: 0, changedFiles: 1, createdAt: NOW, files: files.map((file) => ({ status: "modified", additions: 1, deletions: 0, ...file })), threads: [], title: "t", requestedReviewers: [] });
 
 describe("MCP tools", () => {
   it("draft saves for the calling run; revise reports refusals; others are refused", async () => {
     const { inbox, reviews, state } = setup();
     await inbox.poll();
-    expect(callTool(inbox, reviews, "agent-1", "inbox_review_draft", raw, NOW).isError).toBeFalsy();
+    expect((await callTool(inbox, reviews, "agent-1", "inbox_review_draft", raw, NOW)).isError).toBeFalsy();
     const runId = state().runs[0]!.id;
     expect(state().runs[0]).toMatchObject({ state: "needs-decision", reason: "review drafted: request-changes · 80% · 1 blocker, 1 note" });
     reviews.save(updateComment(reviews.get(runId)!, "c1", { status: "kept" }));
-    expect(callTool(inbox, reviews, "agent-1", "inbox_review_revise", { drop: ["c1"] }).text).toBe("Nothing changed. Refused: c1: the human wrote or decided on it. Ask the human to change those.");
-    expect(callTool(inbox, reviews, "agent-1", "inbox_review_revise", { drop: ["c2"] }).text).toBe("Applied: removed c2.");
-    expect(callTool(inbox, reviews, "someone-else", "inbox_review_draft", raw).text).toBe("Only agents started by paseo-inbox can save a review draft");
+    expect((await callTool(inbox, reviews, "agent-1", "inbox_review_revise", { drop: ["c1"] })).text).toBe("Nothing changed. Refused: c1: the human wrote or decided on it. Ask the human to change those.");
+    expect((await callTool(inbox, reviews, "agent-1", "inbox_review_revise", { drop: ["c2"] })).text).toBe("Applied: removed c2.");
+    expect((await callTool(inbox, reviews, "someone-else", "inbox_review_draft", raw)).text).toBe("Only agents started by paseo-inbox can use the inbox tools");
   });
 });
 
@@ -178,17 +178,17 @@ describe("postDraft", () => {
   it("checks GitHub's live head, folds what can't go inline, posts once", async () => {
     const { inbox, reviews, state } = setup();
     await inbox.poll();
-    callTool(inbox, reviews, "agent-1", "inbox_review_draft", raw, NOW);
+    await callTool(inbox, reviews, "agent-1", "inbox_review_draft", raw, NOW);
     const runId = state().runs[0]!.id;
     const post = vi.fn(async () => "https://github.com/acme/shop/pull/7#pullrequestreview-1");
     await expect(postDraft(inbox, reviews, runId, post, async () => details("bbbbbbb222"))).rejects.toThrow("new commits since this draft (aaaaaaa → bbbbbbb)");
     expect(post).not.toHaveBeenCalled();
-    expect(await postDraft(inbox, reviews, runId, post, async () => details("aaaaaaa111"), NOW)).toEqual({ url: "https://github.com/acme/shop/pull/7#pullrequestreview-1", inline: 1, folded: 1 });
+    expect(await postDraft(inbox, reviews, runId, post, async () => details("aaaaaaa111"), NOW)).toEqual({ url: "https://github.com/acme/shop/pull/7#pullrequestreview-1", inline: 1, folded: 1, replies: 0, failedReplies: 0 });
     expect(reviews.get(runId)).toMatchObject({ postedVerdict: "request-changes" });
     expect(state().runs[0]).toMatchObject({ state: "done" });
     await expect(postDraft(inbox, reviews, runId, post, async () => details("aaaaaaa111"))).rejects.toThrow("Already posted");
     // A posted draft can't be replaced by the agent either.
-    expect(callTool(inbox, reviews, "agent-1", "inbox_review_draft", raw).isError).toBe(true);
+    expect((await callTool(inbox, reviews, "agent-1", "inbox_review_draft", raw)).isError).toBe(true);
     expect(post).toHaveBeenCalledTimes(1);
   });
 });

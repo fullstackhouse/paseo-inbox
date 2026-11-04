@@ -1,7 +1,7 @@
 import type { PluginTheme } from "@getpaseo/plugin";
 import { useState } from "react";
 import { Text, TextInput, View } from "react-native";
-import { SEVERITIES, type CommentChange, type Placement, type Severity, type StoredComment } from "../shared/review";
+import { isHeld, SEVERITIES, type CommentChange, type Placement, type PrThread, type Severity, type StoredComment } from "../shared/review";
 import { Markdown } from "./Markdown";
 import { Chip, Pill, severityColor } from "./ui";
 
@@ -37,8 +37,11 @@ export function CommentCard({
   onDelete,
   onDiscuss,
   onOpenFile,
+  raisedBy,
 }: {
   comment: StoredComment;
+  /** The other reviewer's thread this comment repeats (already raised). */
+  raisedBy?: PrThread;
   theme: PluginTheme;
   editable: boolean;
   where?: Placement;
@@ -75,7 +78,19 @@ export function CommentCard({
         </Text>
         {comment.status !== "draft" && !mine ? <Text style={{ color: theme.colors.foregroundMuted, fontSize: 12 }}>{comment.status}</Text> : null}
       </View>
-      {note ? <Text style={{ color: theme.colors.statusWarning, fontSize: 12 }}>{note}</Text> : null}
+      {comment.raised !== null ? (
+        <Text style={{ color: theme.colors.statusWarning, fontSize: 12 }}>
+          {raisedBy ? `Already raised by @${raisedBy.author}` : "Already raised by another reviewer"}
+          {isHeld(comment) ? " · held back, not posted" : " · posts as a reply in that thread"}
+        </Text>
+      ) : note ? (
+        <Text style={{ color: theme.colors.statusWarning, fontSize: 12 }}>{note}</Text>
+      ) : null}
+      {raisedBy ? (
+        <Text style={{ color: theme.colors.foregroundMuted, fontSize: 12, borderLeftWidth: 2, borderLeftColor: theme.colors.border, paddingLeft: 8 }} numberOfLines={3}>
+          @{raisedBy.author}: {raisedBy.body}
+        </Text>
+      ) : null}
       {editing ? (
         <>
           <TextInput
@@ -110,7 +125,14 @@ export function CommentCard({
             <Chip theme={theme} label="Restore" disabled={busy} style={small} textStyle={smallText} onPress={() => void run(() => onChange({ status: "draft" }))} />
           ) : (
             <>
-              {!mine && comment.status === "draft" ? <Chip theme={theme} label="Keep" disabled={busy} style={small} textStyle={smallText} onPress={() => void run(() => onChange({ status: "kept" }))} /> : null}
+              {comment.raised !== null ? (
+                <>
+                  <Chip theme={theme} label={comment.reply ? "Hold back" : "Reply in thread"} disabled={busy} style={small} textStyle={smallText} onPress={() => void run(() => onChange({ reply: !comment.reply }))} />
+                  <Chip theme={theme} label="Post as new" disabled={busy} style={small} textStyle={smallText} onPress={() => void run(() => onChange({ unraise: true }))} />
+                </>
+              ) : !mine && comment.status === "draft" ? (
+                <Chip theme={theme} label="Keep" disabled={busy} style={small} textStyle={smallText} onPress={() => void run(() => onChange({ status: "kept" }))} />
+              ) : null}
               <Chip theme={theme} label="Edit" style={small} textStyle={smallText} onPress={() => setEditing(true)} />
               {mine && onDelete ? (
                 <Chip theme={theme} label="Delete" disabled={busy} style={small} textStyle={smallText} onPress={() => void run(onDelete)} />

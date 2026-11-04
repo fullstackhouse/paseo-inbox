@@ -4,7 +4,7 @@ import { Platform, Pressable, Text, View } from "react-native";
 import { anchors, parsePatch, type DiffLine } from "../shared/diff";
 import { highlightLine, languageFor, type Token } from "../shared/highlight";
 import { addedText, isMarkdownPath } from "../shared/markdown";
-import type { PrFile, Severity, StoredComment } from "../shared/review";
+import type { PrFile, PrThread, Severity, StoredComment } from "../shared/review";
 import { CommentCard, Composer, type CommentChange } from "./CommentCard";
 import { Markdown } from "./Markdown";
 import { Chip, MONO, tint } from "./ui";
@@ -40,8 +40,11 @@ export function FileDiff({
   actions,
   viewed,
   onViewed,
+  threads = [],
 }: {
   file: PrFile;
+  /** Other reviewers' comments on this file, shown where they sit. */
+  threads?: PrThread[];
   comments: StoredComment[];
   theme: PluginTheme;
   compact: boolean;
@@ -81,9 +84,22 @@ export function FileDiff({
   // A big file folds only when nothing in it is commented: comments are never hidden behind a click.
   const diffShown = Boolean(file.patch) && (total <= BIG || showBig || comments.length > 0);
 
+  const threadAt = (line: DiffLine) => threads.filter((thread) => thread.line !== null && anchors(line, { line: thread.line, side: thread.side }));
+  const shownThreads = new Set(hunks.flatMap((hunk) => hunk.lines.flatMap((line) => threadAt(line).map((thread) => thread.id))));
+  const otherThreads = open && !showDoc ? threads.filter((thread) => !shownThreads.has(thread.id)) : [];
+  const threadCard = (thread: PrThread) => (
+    <View key={thread.id} style={{ borderLeftWidth: 3, borderLeftColor: theme.colors.foregroundMuted, backgroundColor: theme.colors.surface1, borderRadius: 6, padding: 10, gap: 4 }}>
+      <Text style={{ color: theme.colors.foregroundMuted, fontSize: 12 }}>
+        @{thread.author}
+        {thread.inReplyTo ? " · reply" : ""} · on GitHub
+      </Text>
+      <Markdown text={thread.body} theme={theme} size={13} />
+    </View>
+  );
   const card = (comment: StoredComment, where: "inline" | "file" | "outside") => (
     <CommentCard
       key={comment.id}
+      raisedBy={comment.raised !== null ? threads.find((thread) => thread.id === comment.raised) : undefined}
       comment={comment}
       theme={theme}
       editable={actions.editable}
@@ -179,6 +195,7 @@ export function FileDiff({
                   return (
                     <View key={lineIndex}>
                       <Line line={line} tokens={highlighted[hunkIndex]?.[lineIndex]} theme={theme} compact={compact} active={here} onPress={actions.editable && number ? () => setTarget(here ? null : { line: number, side, text: line.text }) : undefined} />
+                      {threadAt(line).length ? <View style={{ padding: 8, gap: 6, backgroundColor: theme.colors.surface0 }}>{threadAt(line).map(threadCard)}</View> : null}
                       {comments
                         .filter((comment) => on(line, comment))
                         .map((comment) => (
@@ -194,6 +211,12 @@ export function FileDiff({
             ))
           )}
           {outside.length ? <View style={{ padding: 8, gap: 8, backgroundColor: theme.colors.surface0 }}>{outside.map((comment) => card(comment, "outside"))}</View> : null}
+          {otherThreads.length ? (
+            <View style={{ padding: 8, gap: 6, backgroundColor: theme.colors.surface0 }}>
+              <Text style={{ color: theme.colors.foregroundMuted, fontSize: 12 }}>Other reviewers, on lines outside this diff:</Text>
+              {otherThreads.map(threadCard)}
+            </View>
+          ) : null}
         </View>
       ) : null}
     </View>

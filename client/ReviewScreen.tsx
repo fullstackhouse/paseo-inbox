@@ -10,10 +10,14 @@ import {
   effectiveVerdict,
   getPrDetails,
   getReview,
+  handoffReview,
   isViewed,
   placement,
   postReview,
+  previewReview,
+  prPeople,
   REVISE_TOOL,
+  setReviewBody,
   setFileViewed,
   setReviewVerdict,
   updateReviewComment,
@@ -26,6 +30,7 @@ import {
   type Severity,
 } from "../shared/review";
 import { CommentCard } from "./CommentCard";
+import { HandoffPanel, PreviewPane } from "./Decide";
 import { FileDiff, type DiffActions } from "./FileDiff";
 import { Markdown } from "./Markdown";
 import { useOpenUrl } from "./openUrl";
@@ -34,7 +39,7 @@ import { useInbox } from "./useInbox";
 
 export const REVIEW_SCREEN = "review";
 
-type Tab = "summary" | "walkthrough" | "files" | "description" | "comments";
+type Tab = "summary" | "walkthrough" | "files" | "description" | "comments" | "preview";
 
 /** Runs whose review draft is waiting for the human, newest first: the prev/next order. */
 export const reviewQueue = (runs: readonly Run[]) =>
@@ -67,6 +72,11 @@ export function ReviewScreen({ theme, layout, navigation, params }: PluginScreen
   const redraft = useRpc(runNow);
   const dismiss = useRpc(skipRun);
   const markViewed = useRpc(setFileViewed);
+  const preview = useRpc(previewReview);
+  const saveBody = useRpc(setReviewBody);
+  const people = useRpc(prPeople);
+  const handoff = useRpc(handoffReview);
+  const [handingOff, setHandingOff] = useState(false);
   const openUrl = useOpenUrl();
 
   const [draft, setDraft] = useState<ReviewDraft | null>(null);
@@ -265,12 +275,14 @@ export function ReviewScreen({ theme, layout, navigation, params }: PluginScreen
   const folded = live.filter((comment) => details && placement(comment, files) !== "inline").length;
   const verdict = draft ? effectiveVerdict(draft) : null;
   const mismatch = draft ? verdictMismatch(draft) : null;
+  const threadsFor = (path: string) => details?.threads.filter((thread) => thread.path === path) ?? [];
   const tabs: { id: Tab; label: string }[] = [
     { id: "summary", label: "Summary" },
     ...(chapters.length ? [{ id: "walkthrough" as const, label: `Walkthrough ${chapters.length}` }] : []),
     { id: "files", label: `Files ${details ? files.length : pr.files.length}` },
     { id: "description", label: "Description" },
     { id: "comments", label: `Comments ${live.length}` },
+    ...(draft && !draft.postedUrl ? [{ id: "preview" as const, label: draft.bodyOverride !== undefined ? "Preview (edited)" : "Preview" }] : []),
   ];
 
   const viewedCount = files.filter((file) => isViewed(draft, file)).length;
@@ -300,6 +312,7 @@ export function ReviewScreen({ theme, layout, navigation, params }: PluginScreen
           onToggle={() => toggleFile(path)}
           actions={actions}
           viewed={isViewed(draft, file)}
+          threads={threadsFor(path)}
           onViewed={
             draft && !draft.postedUrl
               ? (value) =>
@@ -359,6 +372,8 @@ export function ReviewScreen({ theme, layout, navigation, params }: PluginScreen
             ) : null}
             {stale ? <Pill theme={theme} color={theme.colors.statusWarning}>new commits since this draft</Pill> : null}
             {draft?.postedUrl ? <Pill theme={theme} color={theme.colors.statusSuccess}>posted</Pill> : null}
+            {run.trusted === false ? <Pill theme={theme} color={theme.colors.statusWarning}>read-only run: author not trusted</Pill> : null}
+            {details?.threads.length ? <Pill theme={theme} color={theme.colors.foregroundMuted}>{details.threads.length} comments from others</Pill> : null}
             <View style={{ flex: 1 }} />
             <Chip theme={theme} label="GitHub ↗" onPress={() => openUrl(pr.url)} />
             {run.agentId && navigation ? <Chip theme={theme} label="Reviewer chat" onPress={() => navigation.openAgent({ agentId: run.agentId! })} /> : null}
@@ -450,6 +465,18 @@ export function ReviewScreen({ theme, layout, navigation, params }: PluginScreen
             )
           ) : null}
 
+          {tab === "preview" && draft ? (
+            <PreviewPane
+              theme={theme}
+              runId={runId}
+              stamp={JSON.stringify(draft)}
+              editable={editable}
+              onDraft={setDraft}
+              load={() => preview({ runId })}
+              saveBody={(body) => saveBody({ runId, body })}
+            />
+          ) : null}
+
           {tab === "comments" && draft ? (
             draft.comments.length ? (
               draft.comments.map((comment) => (
@@ -480,6 +507,23 @@ export function ReviewScreen({ theme, layout, navigation, params }: PluginScreen
       {draft && !draft.postedUrl && verdict ? (
         <View style={{ borderTopWidth: 1, borderTopColor: theme.colors.border, backgroundColor: theme.colors.surface1, paddingHorizontal: pad, paddingVertical: 10 }}>
           <View style={{ gap: 8, width: "100%", maxWidth, alignSelf: "center" }}>
+            {handingOff && run ? (
+              <HandoffPanel
+                theme={theme}
+                hasDraft={Boolean(draft)}
+                loadPeople={() => people({ itemKey: run.itemKey })}
+                onCancel={() => setHandingOff(false)}
+                onHandoff={(input) =>
+                  act("handoff", async () => {
+                    const result = await handoff({ runId, ...input });
+                    setHandingOff(false);
+                    setNotice(`Handed off to ${input.to.startsWith("@") ? input.to : `@${input.to}`}.`);
+                    setDraft((current) => (current ? { ...current, postedUrl: result.url } : current));
+                    await refresh();
+                  })
+                }
+              />
+            ) : null}
             {mismatch && editable ? (
               <Text style={{ color: theme.colors.statusWarning, fontSize: 12 }}>
                 {mismatch}.{" "}
@@ -502,6 +546,7 @@ export function ReviewScreen({ theme, layout, navigation, params }: PluginScreen
                 />
               ))}
               <View style={{ flex: 1 }} />
+              <Chip theme={theme} label="Hand off" active={handingOff} disabled={Boolean(busy) || !run.agentId} style={small} textStyle={{ fontSize: 12 }} onPress={() => setHandingOff(!handingOff)} />
               <Chip theme={theme} label={busy === "done" ? "…" : next ? "Dismiss, next" : "Dismiss"} disabled={Boolean(busy)} style={small} textStyle={{ fontSize: 12 }} onPress={() => void done()} />
             </View>
             <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
