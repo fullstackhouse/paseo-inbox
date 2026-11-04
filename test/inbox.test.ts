@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { globToRegExp, groupRuns, mismatch, needsDecisionCount, plan, renderPrompt, requeue, runId, setRun, startable } from "../shared/inbox";
+import { ConfigSchema, globToRegExp, groupRuns, mismatch, needsDecisionCount, plan, renderPrompt, requeue, runId, setRun, startable } from "../shared/inbox";
 import { config, emptyState, later, NOW, pr } from "./fixtures";
 
 const states = (state: ReturnType<typeof plan>) => state.runs.map((run) => [run.rule, run.version, run.state]);
@@ -15,6 +15,14 @@ describe("globToRegExp", () => {
     ["src/?.ts", "src/a.ts", true],
   ])("%s ~ %s → %s", (glob, path, expected) => {
     expect(globToRegExp(glob).test(path)).toBe(expected);
+  });
+});
+
+describe("ConfigSchema", () => {
+  it("requires provider/model, globally and per rule", () => {
+    expect(ConfigSchema.safeParse({ provider: "claude" }).error?.issues[0]?.message).toMatch(/^use "provider\/model"/);
+    expect(ConfigSchema.safeParse({ rules: [{ name: "r", source: "s", prompt: "p", provider: "codex" }] }).success).toBe(false);
+    expect(ConfigSchema.parse({ provider: "codex/gpt-5.5" }).provider).toBe("codex/gpt-5.5");
   });
 });
 

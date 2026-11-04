@@ -25,7 +25,7 @@ Paseo shows an **Inbox** row in the sidebar. It does nothing until you write `~/
 {
   "pollSeconds": 300,          // min 60
   "maxConcurrent": 2,          // agents running at once
-  "provider": "claude",        // or "claude/claude-opus-5-5", "codex/gpt-5.5"
+  "provider": "claude/claude-opus-5-5", // provider/model; `paseo provider models claude`
   "mode": "auto",              // provider mode for unattended runs (Claude: auto)
   "checkouts": { "acme/shop": "~/src/shop" },
   "sources": {

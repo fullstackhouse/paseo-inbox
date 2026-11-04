@@ -29,7 +29,7 @@ describe("Inbox", () => {
     const { inbox, started, saved } = harness({ review: [pr()] });
     await inbox.poll();
     expect(started).toHaveLength(1);
-    expect(started[0]).toMatchObject({ cwd: "/src/shop", provider: "claude", mode: "auto" });
+    expect(started[0]).toMatchObject({ cwd: "/src/shop", provider: "claude/claude-opus-5-5", mode: "auto" });
     expect(started[0]!.prompt).toContain("Review https://github.com/acme/shop/pull/7");
     expect(saved().runs[0]).toMatchObject({ state: "running", agentId: "agent-1", workspaceId: "ws" });
     expect(inbox.isInboxAgent("agent-1")).toBe(true);
