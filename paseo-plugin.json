@@ -1,0 +1,8 @@
+{
+  "id": "paseo-inbox",
+  "name": "Inbox",
+  "description": "Polls GitHub PR searches, matches each PR against your rules, and starts one agent per match (review draft, QA screenshots, red-CI fix). Agents it starts cannot write to GitHub; results come back as asks.",
+  "requirements": {
+    "paseo": ">=0.12.0"
+  }
+}
