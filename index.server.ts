@@ -20,7 +20,9 @@ import {
   getReview,
   INSTRUCTIONS,
   MCP_SERVER,
+  patchPrint,
   postReview,
+  setFileViewed,
   setReviewVerdict,
   severityFromRpc,
   TOOLS,
@@ -153,6 +155,15 @@ export default function contribute(server: PluginServerContext) {
     return editDraft(runId, (draft) => {
       if (draft.postedUrl) throw new Error("Already posted");
       return { ...draft, verdictOverride: verdict === null || verdict === draft.verdict ? undefined : verdict };
+    });
+  });
+  server.handle(setFileViewed, ({ runId, path, patch, viewed }, { paseo: api }) => {
+    capture(api);
+    return editDraft(runId, (draft) => {
+      const next = { ...draft.viewed };
+      if (viewed) next[path] = patchPrint(patch);
+      else delete next[path];
+      return { ...draft, viewed: next };
     });
   });
   server.handle(discussReview, async ({ runId, message }, { paseo: api }) => {

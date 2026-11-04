@@ -10,9 +10,11 @@ import {
   effectiveVerdict,
   getPrDetails,
   getReview,
+  isViewed,
   placement,
   postReview,
   REVISE_TOOL,
+  setFileViewed,
   setReviewVerdict,
   updateReviewComment,
   VerdictSchema,
@@ -63,6 +65,7 @@ export function ReviewScreen({ theme, layout, navigation, params }: PluginScreen
   const discuss = useRpc(discussReview);
   const redraft = useRpc(runNow);
   const dismiss = useRpc(skipRun);
+  const markViewed = useRpc(setFileViewed);
 
   const [draft, setDraft] = useState<ReviewDraft | null>(null);
   const [details, setDetails] = useState<PrDetails | null>(null);
@@ -73,6 +76,10 @@ export function ReviewScreen({ theme, layout, navigation, params }: PluginScreen
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const scroll = useRef<ScrollView>(null);
+  // Jump-to-file: where the content and each file card sit, and which file to scroll to once laid out.
+  const contentY = useRef(0);
+  const fileY = useRef(new Map<string, number>());
+  const [scrollTo, setScrollTo] = useState<string | null>(null);
 
   // The prev/next set is fixed when the screen opens, so posting or dismissing doesn't reshuffle it.
   const snapshot = useRef<string[] | null>(null);
@@ -251,10 +258,47 @@ export function ReviewScreen({ theme, layout, navigation, params }: PluginScreen
     { id: "comments", label: `Comments ${live.length}` },
   ];
 
-  const fileDiff = (path: string) => {
+  const viewedCount = files.filter((file) => isViewed(draft, file)).length;
+  const fileDiff = (path: string, track = false) => {
     const file = files.find((candidate) => candidate.path === path);
     return file ? (
-      <FileDiff key={path} file={file} comments={commentsByFile.get(path) ?? []} theme={theme} compact={layout.compact} open={openFiles.has(path)} onToggle={() => toggleFile(path)} actions={actions} />
+      <View
+        key={path}
+        onLayout={
+          track
+            ? (event) => {
+                fileY.current.set(path, event.nativeEvent.layout.y);
+                if (scrollTo === path) {
+                  scroll.current?.scrollTo({ y: Math.max(0, contentY.current + event.nativeEvent.layout.y - 64), animated: true });
+                  setScrollTo(null);
+                }
+              }
+            : undefined
+        }
+      >
+        <FileDiff
+          file={file}
+          comments={commentsByFile.get(path) ?? []}
+          theme={theme}
+          compact={layout.compact}
+          open={openFiles.has(path)}
+          onToggle={() => toggleFile(path)}
+          actions={actions}
+          viewed={isViewed(draft, file)}
+          onViewed={
+            draft && !draft.postedUrl
+              ? (value) =>
+                  void markViewed({ runId, path, patch: file.patch, viewed: value })
+                    .then((next) => {
+                      setDraft(next);
+                      // Ticking a file folds it away, like GitHub's "Viewed".
+                      if (value) toggleFile(path, false);
+                    })
+                    .catch(fail)
+              : undefined
+          }
+        />
+      </View>
     ) : (
       <Text key={path} style={muted}>
         {path}
@@ -324,7 +368,7 @@ export function ReviewScreen({ theme, layout, navigation, params }: PluginScreen
         </View>
 
         {/* Content */}
-        <View style={{ paddingHorizontal: pad, paddingTop: 14, gap: 12, width: "100%", maxWidth, alignSelf: "center" }}>
+        <View onLayout={(event) => (contentY.current = event.nativeEvent.layout.y)} style={{ paddingHorizontal: pad, paddingTop: 14, gap: 12, width: "100%", maxWidth, alignSelf: "center" }}>
           {!draft && tab !== "description" && tab !== "files" ? <Text style={muted}>No review draft for this run yet.</Text> : null}
 
           {tab === "summary" && draft ? (
@@ -347,9 +391,13 @@ export function ReviewScreen({ theme, layout, navigation, params }: PluginScreen
                 <View key={chapter.title + index} style={{ gap: 8, paddingBottom: 8 }}>
                   <Text style={{ color: theme.colors.foreground, fontSize: 16, fontWeight: "700" }}>
                     {chapter.other ? chapter.title : `${index + 1}. ${chapter.title}`}
+                    <Text style={{ ...muted, fontWeight: "400" }}>
+                      {"  "}
+                      {chapter.files.filter((path) => isViewed(draft, { path, patch: files.find((file) => file.path === path)?.patch })).length}/{chapter.files.length} viewed
+                    </Text>
                   </Text>
                   {chapter.body ? <Markdown text={chapter.body} theme={theme} size={14} /> : null}
-                  {chapter.files.map(fileDiff)}
+                  {chapter.files.map((path) => fileDiff(path))}
                 </View>
               ))
             : null}
@@ -361,8 +409,12 @@ export function ReviewScreen({ theme, layout, navigation, params }: PluginScreen
                   <Chip theme={theme} label="Expand all" onPress={() => setOpenFiles(new Set(files.map((file) => file.path)))} />
                   <Chip theme={theme} label="Collapse all" onPress={() => setOpenFiles(new Set())} />
                   {live.length ? <Chip theme={theme} label="Only commented" onPress={() => setOpenFiles(new Set(live.map((comment) => comment.path)))} /> : null}
+                  <Chip theme={theme} label="Not viewed" onPress={() => setOpenFiles(new Set(files.filter((file) => !isViewed(draft, file)).map((file) => file.path)))} />
+                  <Text style={{ ...muted, alignSelf: "center" }}>
+                    {viewedCount}/{files.length} viewed
+                  </Text>
                 </View>
-                {files.map((file) => fileDiff(file.path))}
+                {files.map((file) => fileDiff(file.path, true))}
               </>
             ) : (
               <ActivityIndicator color={theme.colors.foregroundMuted} />
@@ -397,6 +449,7 @@ export function ReviewScreen({ theme, layout, navigation, params }: PluginScreen
                   onOpenFile={() => {
                     toggleFile(comment.path, true);
                     setTab("files");
+                    setScrollTo(comment.path);
                   }}
                 />
               ))
