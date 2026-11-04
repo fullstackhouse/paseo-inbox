@@ -52,7 +52,13 @@ Paseo shows an **Inbox** row in the sidebar. It does nothing until you write `~/
 
 ## Review drafts
 
-Inbox agents get one MCP tool, `inbox_review_draft`. It takes a verdict, a confidence (0–100), a markdown summary, optional chapters, and inline comments on lines of the diff. The draft is saved under `~/.paseo/plugin-data/inbox/reviews/`, and the run moves to **Needs a decision**. On the inbox card, **Read draft** shows the summary and comments. **Post review** asks you to confirm, then the plugin itself posts the review to GitHub. If the PR has new commits since the draft, Post is refused: rerun to draft again. A full review screen with per-comment editing comes next (SPEC-048 step 7).
+Inbox agents get one MCP tool, `inbox_review_draft`. It takes a verdict, a confidence (0–100), a markdown summary, optional chapters, and inline comments on lines of the diff. The draft is saved under `~/.paseo/plugin-data/inbox/reviews/`, and the run moves to **Needs a decision**. Tap a drafted row to open the **review screen**, which works on a phone and on desktop:
+
+- **Header:** the PR's repo and number, title, author, branch → base, head SHA, size, the verdict with confidence, plus **GitHub ↗** and **Ask the reviewer**. Ask the reviewer opens the agent that wrote the draft, so you can argue with it or have it redraft. A redraft replaces your edits.
+- **Tabs:** Summary, Walkthrough (the reviewer's chapters with their files), Files (every file with its diff and the drafted comments under their lines, plus Expand all, Collapse all and Only commented), Description (the author's PR body), and Comments.
+- **Comments:** each one can be kept, edited, dropped or restored.
+- **Moving between drafts:** ‹ › steps through the other drafts waiting for you.
+- **Posting:** the bottom bar posts the review after a confirm, with the inline comments you didn't drop. If the PR has new commits since the draft, Post is refused: rerun to draft again.
 
 ## The write guard
 

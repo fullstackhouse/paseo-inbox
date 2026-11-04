@@ -2,6 +2,8 @@ import type { PluginClientContext, PluginSidebarItemProps } from "@getpaseo/plug
 import { SidebarRow } from "@getpaseo/plugin/client/ui";
 import { Text } from "react-native";
 import { INBOX_SCREEN, InboxScreen } from "./client/InboxScreen";
+import { setOpenScreen } from "./client/nav";
+import { REVIEW_SCREEN, ReviewScreen } from "./client/ReviewScreen";
 import { useInbox } from "./client/useInbox";
 import { needsDecisionCount } from "./shared/inbox";
 
@@ -19,7 +21,9 @@ function InboxItem({ currentScreen, openScreen, theme }: PluginSidebarItemProps)
 }
 
 export default function contribute(client: PluginClientContext) {
+  setOpenScreen((input) => client.openScreen(input));
   client.addScreen({ id: INBOX_SCREEN, title: "Inbox", Component: InboxScreen });
+  client.addScreen({ id: REVIEW_SCREEN, title: "Review", Component: ReviewScreen });
   client.addSidebarHeaderItem({ id: INBOX_SCREEN, title: "Inbox", Component: InboxItem });
   return () => {};
 }

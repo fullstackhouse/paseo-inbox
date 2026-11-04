@@ -1,7 +1,7 @@
 import type { PaseoApi } from "@getpaseo/client";
 import type { PluginServerContext } from "@getpaseo/plugin/server";
 import { installBridge } from "./server/bridge";
-import { GithubSource, postPullReview } from "./server/github";
+import { GithubSource, postPullReview, PrDetailsCache } from "./server/github";
 import { guardEnv, installShims, RUN_ENV } from "./server/guard";
 import { Inbox, type StartRequest } from "./server/inbox";
 import { listen } from "./server/listener";
@@ -10,7 +10,7 @@ import { ReviewStore } from "./server/reviews";
 import { dataDir, loadConfig, StateStore } from "./server/store";
 import { callTool, isInboxPermission, PREAPPROVED } from "./server/tools";
 import { listInbox, pollNow, runNow, skipRun } from "./shared/inbox";
-import { getReview, INSTRUCTIONS, MCP_SERVER, postReview, TOOLS } from "./shared/review";
+import { getPrDetails, getReview, INSTRUCTIONS, MCP_SERVER, postReview, TOOLS, updateComment, updateReviewComment } from "./shared/review";
 
 export const RUN_LABEL = "inbox.run";
 export const PR_LABEL = "inbox.pr";
@@ -22,6 +22,7 @@ export default function contribute(server: PluginServerContext) {
   const reviews = new ReviewStore(dir);
   const mcp = installBridge(dir);
   const github = new GithubSource();
+  const prDetails = new PrDetailsCache();
   // The daemon session behind `paseo` lives as long as this subprocess; any hook or handler hands it over.
   let paseo: PaseoApi | null = null;
   const capture = (api: PaseoApi) => {
@@ -102,6 +103,20 @@ export default function contribute(server: PluginServerContext) {
   server.handle(getReview, ({ runId }, { paseo: api }) => {
     capture(api);
     return reviews.get(runId);
+  });
+  server.handle(getPrDetails, ({ itemKey }, { paseo: api }) => {
+    capture(api);
+    const item = inbox.item(itemKey);
+    if (!item) throw new Error(`Unknown PR ${itemKey}`);
+    return prDetails.get(item.pr.repo, item.pr.number);
+  });
+  server.handle(updateReviewComment, ({ runId, commentId, status, body }, { paseo: api }) => {
+    capture(api);
+    const draft = reviews.get(runId);
+    if (!draft) throw new Error("No review draft for this run");
+    const next = updateComment(draft, commentId, body !== undefined ? { body } : { status: status ?? "kept" });
+    reviews.save(next);
+    return next;
   });
   // The only path from a review draft to GitHub: the Inbox screen's Post button.
   server.handle(postReview, ({ runId }, { paseo: api }) => {

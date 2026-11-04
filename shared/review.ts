@@ -121,7 +121,54 @@ export const TOOLS = [
   },
 ];
 
+// ---------- PR details (for the review screen) ----------
+
+export const PrFileSchema = z.object({
+  path: z.string(),
+  previousPath: z.string().optional(),
+  status: z.string(),
+  additions: z.number(),
+  deletions: z.number(),
+  /** Absent for binary files and patches GitHub truncates. */
+  patch: z.string().optional(),
+});
+export type PrFile = z.infer<typeof PrFileSchema>;
+
+export const PrDetailsSchema = z.object({
+  body: z.string(),
+  author: z.string(),
+  baseRef: z.string(),
+  headRef: z.string(),
+  headSha: z.string(),
+  additions: z.number(),
+  deletions: z.number(),
+  changedFiles: z.number(),
+  createdAt: z.string(),
+  files: z.array(PrFileSchema),
+});
+export type PrDetails = z.infer<typeof PrDetailsSchema>;
+
+/** Applies a human's keep / edit / drop to one draft comment. */
+export function updateComment(draft: ReviewDraft, commentId: string, change: { status: "kept" | "dropped" | "draft" } | { body: string }): ReviewDraft {
+  if (draft.postedUrl) throw new Error("Already posted");
+  if (!draft.comments.some((comment) => comment.id === commentId)) throw new Error(`No comment ${commentId}`);
+  return {
+    ...draft,
+    comments: draft.comments.map((comment) => {
+      if (comment.id !== commentId) return comment;
+      if ("body" in change) return { ...comment, body: change.body.trim() || comment.body, status: "edited" as const };
+      return { ...comment, status: change.status };
+    }),
+  };
+}
+
 // ---------- RPCs ----------
 
 export const getReview = defineRpc({ name: "inbox.review_get", input: z.object({ runId: z.string() }), output: ReviewDraftSchema.nullable() });
+export const getPrDetails = defineRpc({ name: "inbox.pr_get", input: z.object({ itemKey: z.string() }), output: PrDetailsSchema });
+export const updateReviewComment = defineRpc({
+  name: "inbox.review_comment",
+  input: z.object({ runId: z.string(), commentId: z.string(), status: z.enum(["kept", "dropped", "draft"]).optional(), body: z.string().optional() }),
+  output: ReviewDraftSchema,
+});
 export const postReview = defineRpc({ name: "inbox.review_post", input: z.object({ runId: z.string() }), output: z.object({ url: z.string() }) });

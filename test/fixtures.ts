@@ -17,6 +17,9 @@ export function pr(overrides: Partial<Pr> = {}): Pr {
     labels: [],
     files: ["src/basket/BasketPage.tsx"],
     checks: "passing",
+    author: "ola",
+    additions: 12,
+    deletions: 3,
     ...overrides,
   };
 }
