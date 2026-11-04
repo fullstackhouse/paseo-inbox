@@ -91,6 +91,10 @@ const OPEN_STATES: ReadonlySet<RunState> = new Set(["queued", "running", "needs-
 /** States of runs that never started an agent, so a poll may change its mind about them. */
 const REDECIDED: ReadonlySet<RunState> = new Set(["skipped", "no-checkout"]);
 const KEEP_DAYS = 7;
+/** States a run leaves when its PR leaves the source; a running agent finishes on its own. */
+const LEAVES: ReadonlySet<RunState> = new Set(["queued", "needs-decision", "no-checkout", "skipped", "failed", "stale"]);
+/** Reason on a run the human dismissed: later pushes don't queue that rule for that PR again. */
+export const DISMISSED = "dismissed";
 
 export const prKey = (repo: string, number: number) => `${repo.toLowerCase()}#${number}`;
 export const runId = (itemKey: string, rule: string, version: string) => `${itemKey}|${rule}|${version}`;
@@ -183,6 +187,7 @@ export function plan({ config, results, state, now }: PlanInput): State {
       const base = { id, itemKey: pr.key, source, rule: ruleName, version: pr.headSha, updatedAt: now };
       let next: Run | null;
       if (!rule) next = { ...base, state: "skipped", reason: reasons.join("; ") };
+      else if (earlier.some((run) => run.state === "done" && run.reason === DISMISSED)) next = null;
       else if (rule.rerun === "once" && earlier.some((run) => run.state !== "skipped" && run.state !== "no-checkout")) next = null;
       else if (rule.rerun === "manual") next = { ...base, state: "skipped", reason: "manual rule: use Run now" };
       else if (!checkouts.has(pr.repo.toLowerCase())) next = { ...base, state: "no-checkout", reason: `set checkouts["${pr.repo}"] in inbox.json` };
@@ -194,6 +199,17 @@ export function plan({ config, results, state, now }: PlanInput): State {
       runs = runs.filter((run) => run.id !== id && !(matched && run.itemKey === pr.key && run.version === pr.headSha && run.state === "skipped"));
       add(next);
     }
+  }
+
+  // A PR that left a source that did answer (reviewed on GitHub, merged, closed, label removed) has
+  // nothing left to decide there: close its waiting runs so nobody posts onto a settled PR.
+  for (const [source, prs] of Object.entries(results)) {
+    const present = new Set(prs.map((pr) => pr.key));
+    runs = runs.map((run) =>
+      run.source === source && !present.has(run.itemKey) && LEAVES.has(run.state)
+        ? { ...run, state: "done", reason: `no longer in ${source}: reviewed on GitHub, merged or closed`, updatedAt: now }
+        : run,
+    );
   }
 
   // Forget items no source has returned for KEEP_DAYS, with their runs.

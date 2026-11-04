@@ -1,5 +1,5 @@
 import type { AgentPermissionRequest, McpToolRef } from "@getpaseo/protocol/agent-types";
-import { draftHeadline, MCP_SERVER, REVIEW_TOOL, ReviewInputSchema, toDraft, TOOLS } from "../shared/review";
+import { draftHeadline, MCP_SERVER, replaceDraft, REVIEW_TOOL, ReviewInputSchema, REVISE_TOOL, ReviseInputSchema, reviseDraft, TOOLS } from "../shared/review";
 import type { Inbox } from "./inbox";
 import type { ReviewStore } from "./reviews";
 
@@ -18,13 +18,25 @@ export interface ToolResult {
 
 export function callTool(inbox: Inbox, reviews: ReviewStore, agentId: string | null, name: string, args: unknown, now = new Date().toISOString()): ToolResult {
   try {
-    if (name !== REVIEW_TOOL) throw new Error(`Unknown tool ${name}`);
     const run = agentId ? inbox.runForAgent(agentId) : null;
     if (!run) throw new Error("Only agents started by paseo-inbox can save a review draft");
-    const draft = toDraft(ReviewInputSchema.parse(args), run, now);
-    reviews.save(draft);
-    inbox.markDrafted(run.id, `review drafted: ${draftHeadline(draft)}`);
-    return { text: `Saved. The human will read it in the Inbox and post it from there: ${draftHeadline(draft)}. Don't post it yourself.` };
+    const previous = reviews.get(run.id);
+    if (name === REVIEW_TOOL) {
+      const draft = replaceDraft(previous, ReviewInputSchema.parse(args), run, now);
+      reviews.save(draft);
+      inbox.markDrafted(run.id, `review drafted: ${draftHeadline(draft)}`);
+      const kept = previous ? draft.comments.filter((comment) => comment.author === "human" || comment.status !== "draft").length : 0;
+      return { text: `Saved: ${draftHeadline(draft)}.${kept ? ` Kept ${kept} comment(s) the human wrote or decided on.` : ""} The human reads and posts it from the Inbox; don't post it yourself.` };
+    }
+    if (name === REVISE_TOOL) {
+      if (!previous) throw new Error(`No draft yet: save one with ${REVIEW_TOOL} first`);
+      const { draft, applied, refused } = reviseDraft(previous, ReviseInputSchema.parse(args));
+      reviews.save(draft);
+      inbox.markDrafted(run.id, `review drafted: ${draftHeadline(draft)}`);
+      const lines = [applied.length ? `Applied: ${applied.join(", ")}.` : "Nothing changed.", ...(refused.length ? [`Refused: ${refused.join("; ")}. Ask the human to change those.`] : [])];
+      return { text: lines.join(" "), isError: !applied.length && refused.length > 0 };
+    }
+    throw new Error(`Unknown tool ${name}`);
   } catch (error) {
     return { text: error instanceof Error ? error.message : String(error), isError: true };
   }

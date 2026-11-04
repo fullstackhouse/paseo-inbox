@@ -1,4 +1,4 @@
-import { modeFor, plan, renderPrompt, providerFor, requeue, setRun, startable, type Config, type InboxView, type Pr, type Run, type State } from "../shared/inbox";
+import { DISMISSED, modeFor, plan, renderPrompt, providerFor, requeue, setRun, startable, type Config, type InboxView, type Pr, type Run, type State } from "../shared/inbox";
 
 export interface StartRequest {
   run: Run;
@@ -149,7 +149,7 @@ export class Inbox {
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
     if (!latest) throw new Error(`No run for ${itemKey} / ${rule}`);
     if (latest.state === "running") throw new Error("It's running; stop the agent first");
-    this.commit(setRun(this.state, latest.id, { state: "done", reason: "dismissed" }, this.now()));
+    this.commit(setRun(this.state, latest.id, { state: "done", reason: DISMISSED }, this.now()));
     // Every run of this item and rule had its own worktree; none is needed any more.
     const workspaces = new Set(this.state.runs.filter((run) => run.itemKey === itemKey && run.rule === rule && run.workspaceId && run.state !== "running").map((run) => run.workspaceId!));
     for (const workspaceId of workspaces) await this.deps.archive?.(workspaceId).catch((error) => console.error("archive failed", workspaceId, error));

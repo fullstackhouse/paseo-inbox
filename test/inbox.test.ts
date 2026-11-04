@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ConfigSchema, globToRegExp, groupRuns, mismatch, needsDecisionCount, plan, renderPrompt, requeue, runId, setRun, startable } from "../shared/inbox";
+import { ConfigSchema, DISMISSED, globToRegExp, groupRuns, mismatch, needsDecisionCount, plan, renderPrompt, requeue, runId, setRun, startable } from "../shared/inbox";
 import { config, emptyState, later, NOW, pr } from "./fixtures";
 
 const states = (state: ReturnType<typeof plan>) => state.runs.map((run) => [run.rule, run.version, run.state]);
@@ -108,6 +108,27 @@ describe("plan", () => {
     const state = plan({ config: config({ rules: [] }), results: { review: [pr()] }, state: emptyState(), now: NOW });
     expect(state.runs).toEqual([]);
     expect(state.items["acme/shop#7"]!.sources).toEqual(["review"]);
+  });
+});
+
+describe("plan: settling", () => {
+  it("closes waiting runs of a PR that left its source (reviewed on GitHub, merged, closed)", () => {
+    let state = plan({ config: config(), results: { review: [pr()] }, state: emptyState(), now: NOW });
+    state = setRun(state, state.runs[0]!.id, { state: "needs-decision" }, NOW);
+    state = plan({ config: config(), results: { review: [] }, state, now: later(5) });
+    expect(state.runs[0]).toMatchObject({ state: "done", reason: "no longer in review: reviewed on GitHub, merged or closed" });
+  });
+  it("doesn't close runs when the source failed to poll, nor a running agent", () => {
+    let state = plan({ config: config(), results: { review: [pr({ number: 1 }), pr({ number: 2 })] }, state: emptyState(), now: NOW });
+    state = setRun(state, state.runs[0]!.id, { state: "running" }, NOW);
+    expect(plan({ config: config(), results: {}, state, now: later(5) }).runs.map((run) => run.state)).toEqual(["running", "queued"]);
+    expect(plan({ config: config(), results: { review: [] }, state, now: later(5) }).runs.map((run) => run.state)).toEqual(["running", "done"]);
+  });
+  it("a dismissed PR isn't drafted again on later pushes", () => {
+    let state = plan({ config: config(), results: { review: [pr()] }, state: emptyState(), now: NOW });
+    state = setRun(state, state.runs[0]!.id, { state: "done", reason: DISMISSED }, NOW);
+    state = plan({ config: config(), results: { review: [pr({ headSha: "bbbbbbb222" })] }, state, now: later(5) });
+    expect(state.runs.map((run) => [run.version, run.state])).toEqual([["aaaaaaa111", "done"]]);
   });
 });
 
