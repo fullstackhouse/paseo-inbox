@@ -230,7 +230,8 @@ export function preamble(pr: Pr): string {
   return [
     `You were started by paseo-inbox for ${pr.url} at ${pr.headSha}.`,
     "Do not write to GitHub: no comments, reviews, labels, pushes or merges. Those commands are blocked for you.",
-    "End by creating one ask whose Send action carries the exact write to perform, so the human can approve it.",
+    "If you were asked for a review, save it with inbox_review_draft; the human posts it from the Inbox.",
+    "Otherwise end by creating one ask with your result and the exact write you propose, so the human can act on it.",
   ].join(" ");
 }
 

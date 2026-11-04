@@ -1,10 +1,16 @@
 import type { PaseoApi } from "@getpaseo/client";
 import type { PluginServerContext } from "@getpaseo/plugin/server";
-import { GithubSource } from "./server/github";
+import { installBridge } from "./server/bridge";
+import { GithubSource, postPullReview } from "./server/github";
 import { guardEnv, installShims, RUN_ENV } from "./server/guard";
 import { Inbox, type StartRequest } from "./server/inbox";
+import { listen } from "./server/listener";
+import { postDraft } from "./server/post";
+import { ReviewStore } from "./server/reviews";
 import { dataDir, loadConfig, StateStore } from "./server/store";
+import { callTool, isInboxPermission, PREAPPROVED } from "./server/tools";
 import { listInbox, pollNow, runNow, skipRun } from "./shared/inbox";
+import { getReview, INSTRUCTIONS, MCP_SERVER, postReview, TOOLS } from "./shared/review";
 
 export const RUN_LABEL = "inbox.run";
 export const PR_LABEL = "inbox.pr";
@@ -13,6 +19,8 @@ export default function contribute(server: PluginServerContext) {
   const dir = dataDir();
   const shimDir = installShims(dir);
   const store = new StateStore(dir);
+  const reviews = new ReviewStore(dir);
+  const mcp = installBridge(dir);
   const github = new GithubSource();
   // The daemon session behind `paseo` lives as long as this subprocess; any hook or handler hands it over.
   let paseo: PaseoApi | null = null;
@@ -41,6 +49,21 @@ export default function contribute(server: PluginServerContext) {
     archive: async (workspaceId) => {
       await paseo?.workspaces.archive(workspaceId);
     }, load: () => store.load(), save: (state) => store.save(state) });
+
+  // Inbox agents, and only those, get the review-draft tool.
+  server.before("agent.create", ({ request }, { paseo: api }) => {
+    capture(api);
+    if (!request.env?.[RUN_ENV]) return;
+    const { config } = request;
+    const preapproved = [...(config.toolPolicy?.preapproved ?? []), ...PREAPPROVED];
+    return { ...request, config: { ...config, mcpServers: { ...config.mcpServers, [MCP_SERVER]: mcp }, toolPolicy: { preapproved } } };
+  });
+  // Asking modes prompt even for preapproved MCP tools; these only save a draft locally.
+  server.on("agent.permission_requested", async ({ agent, request }, { paseo: api }) => {
+    capture(api);
+    if (!inbox.isInboxAgent(agent.id) || !isInboxPermission(request)) return;
+    await api.agents.ref(agent.id).respondToPermission({ requestId: request.id, response: { behavior: "allow" } });
+  });
 
   // The write guard: inbox agents get `gh`/`git` shims first on PATH, on create and on every resume.
   server.before("agent.session_open", ({ request }, { paseo: api }) => {
@@ -76,6 +99,22 @@ export default function contribute(server: PluginServerContext) {
     return { ok: true as const };
   });
 
+  server.handle(getReview, ({ runId }, { paseo: api }) => {
+    capture(api);
+    return reviews.get(runId);
+  });
+  // The only path from a review draft to GitHub: the Inbox screen's Post button.
+  server.handle(postReview, ({ runId }, { paseo: api }) => {
+    capture(api);
+    return postDraft(inbox, reviews, runId, (repo, number, payload) => postPullReview(repo, number, payload));
+  });
+
+  const listening = listen(dir, {
+    "/instructions": async () => ({ instructions: INSTRUCTIONS }),
+    "/tools": async () => ({ tools: TOOLS }),
+    "/call": async ({ agentId, name, arguments: args }) => callTool(inbox, reviews, agentId ?? null, name, args),
+  });
+
   // Poll on the configured interval; the config is re-read every tick, so edits apply without a reload.
   let timer: ReturnType<typeof setTimeout> | null = null;
   let stopped = false;
@@ -85,9 +124,10 @@ export default function contribute(server: PluginServerContext) {
   };
   timer = setTimeout(tick, 5_000);
 
-  return () => {
+  return async () => {
     stopped = true;
     if (timer) clearTimeout(timer);
+    (await listening).close();
   };
 }
 

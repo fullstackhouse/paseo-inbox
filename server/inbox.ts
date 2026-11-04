@@ -102,7 +102,13 @@ export class Inbox {
         const started = await this.deps.start({ run, pr, cwd, provider: providerFor(rule, config), mode: modeFor(rule, config), prompt: renderPrompt(rule, pr) });
         this.commit(setRun(this.state, run.id, { agentId: started.agentId, workspaceId: started.workspaceId ?? undefined }, this.now()));
       } catch (error) {
-        this.commit(setRun(this.state, run.id, { state: "failed", reason: `could not start the agent: ${message(error)}` }, this.now()));
+        // A rate limit passes on its own: keep the run queued for the next poll instead of failing it.
+        const limited = /rate limit/i.test(message(error));
+        const patch: Partial<Run> = limited
+          ? { state: "queued", reason: "GitHub rate limit; retrying on the next poll" }
+          : { state: "failed", reason: `could not start the agent: ${message(error)}` };
+        this.commit(setRun(this.state, run.id, patch, this.now()));
+        if (limited) break;
       }
     }
   }
@@ -144,6 +150,29 @@ export class Inbox {
     // Every run of this item and rule had its own worktree; none is needed any more.
     const workspaces = new Set(this.state.runs.filter((run) => run.itemKey === itemKey && run.rule === rule && run.workspaceId && run.state !== "running").map((run) => run.workspaceId!));
     for (const workspaceId of workspaces) await this.deps.archive?.(workspaceId).catch((error) => console.error("archive failed", workspaceId, error));
+  }
+
+  /** The run an inbox agent belongs to: its latest one. */
+  runForAgent(agentId: string): Run | null {
+    return [...this.state.runs].reverse().find((run) => run.agentId === agentId) ?? null;
+  }
+
+  run(id: string): Run | null {
+    return this.state.runs.find((run) => run.id === id) ?? null;
+  }
+
+  item(key: string) {
+    return this.state.items[key] ?? null;
+  }
+
+  /** A review draft was saved: the human has something to decide on, even if the agent is still finishing. */
+  markDrafted(runId: string, reason: string): void {
+    this.commit(setRun(this.state, runId, { state: "needs-decision", reason }, this.now()));
+    void this.afterChange();
+  }
+
+  markPosted(runId: string, url: string): void {
+    this.commit(setRun(this.state, runId, { state: "done", reason: `review posted: ${url}` }, this.now()));
   }
 
   /** A slot freed up: start whatever is queued. */

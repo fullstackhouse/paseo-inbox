@@ -59,6 +59,24 @@ describe("Inbox", () => {
     expect(saved().runs[0]).toMatchObject({ state: "failed", reason: "could not start the agent: no worktree" });
   });
 
+  it("keeps a run queued when GitHub rate-limits the agent start, and starts it next poll", async () => {
+    let limited = true;
+    const started: string[] = [];
+    const { inbox, saved } = harness({ review: [pr()] }, {
+      start: async ({ run }) => {
+        if (limited) throw new Error("GitHub CLI command failed: API rate limit already exceeded for user ID 1");
+        started.push(run.id);
+        return { agentId: "agent-1" };
+      },
+    });
+    await inbox.poll();
+    expect(saved().runs[0]).toMatchObject({ state: "queued", reason: "GitHub rate limit; retrying on the next poll" });
+    limited = false;
+    await inbox.poll();
+    expect(started).toHaveLength(1);
+    expect(saved().runs[0]!.state).toBe("running");
+  });
+
   it("waits with queued runs until a Paseo session exists", async () => {
     let ready = false;
     const { inbox, started } = harness({ review: [pr()] }, { ready: () => ready });
