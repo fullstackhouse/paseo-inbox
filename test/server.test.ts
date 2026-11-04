@@ -29,7 +29,7 @@ describe("Inbox", () => {
     const { inbox, started, saved } = harness({ review: [pr()] });
     await inbox.poll();
     expect(started).toHaveLength(1);
-    expect(started[0]).toMatchObject({ cwd: "/src/shop", provider: "claude", mode: "auto" });
+    expect(started[0]).toMatchObject({ cwd: "/src/shop", provider: "claude/claude-opus-5-5", mode: "auto" });
     expect(started[0]!.prompt).toContain("Review https://github.com/acme/shop/pull/7");
     expect(saved().runs[0]).toMatchObject({ state: "running", agentId: "agent-1", workspaceId: "ws" });
     expect(inbox.isInboxAgent("agent-1")).toBe(true);
@@ -57,6 +57,35 @@ describe("Inbox", () => {
     const { inbox, saved } = harness({ review: [pr()] }, { start: async () => Promise.reject(new Error("no worktree")) });
     await inbox.poll();
     expect(saved().runs[0]).toMatchObject({ state: "failed", reason: "could not start the agent: no worktree" });
+  });
+
+  it("keeps a run queued when GitHub rate-limits the agent start, and starts it next poll", async () => {
+    let limited = true;
+    const started: string[] = [];
+    const { inbox, saved } = harness({ review: [pr()] }, {
+      start: async ({ run }) => {
+        if (limited) throw new Error("GitHub CLI command failed: API rate limit already exceeded for user ID 1");
+        started.push(run.id);
+        return { agentId: "agent-1" };
+      },
+    });
+    await inbox.poll();
+    expect(saved().runs[0]).toMatchObject({ state: "queued", reason: "GitHub rate limit; retrying on the next poll" });
+    limited = false;
+    await inbox.poll();
+    expect(started).toHaveLength(1);
+    expect(saved().runs[0]!.state).toBe("running");
+  });
+
+  it("starts the next queued run in the same poll when one fails to start", async () => {
+    const { inbox, saved } = harness({ review: [pr({ number: 1 }), pr({ number: 2 })] }, {
+      start: async ({ pr: target }) => {
+        if (target.number === 1) throw new Error("Unable to resolve GitHub repository");
+        return { agentId: "agent-2" };
+      },
+    });
+    await inbox.poll();
+    expect(saved().runs.map((run) => run.state)).toEqual(["failed", "running"]);
   });
 
   it("waits with queued runs until a Paseo session exists", async () => {

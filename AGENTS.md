@@ -8,6 +8,7 @@ Paseo plugin: GitHub PR searches → rules → one agent per match, with a PATH 
 - `server/inbox.ts`: `Inbox` loop over injected deps (config, search, start, store, archive, ready): poll → plan → dispatch within `maxConcurrent`; `turnEnded`/`agentGone` move runs on; runs still `running` at startup become `needs-decision`.
 - `server/github.ts`: `GithubSource` (`gh search prs` + `gh pr view` details cached by URL + `updatedAt`), `summarizeChecks`, `queryArgs`.
 - `server/guard.ts`: `GUARD_JS` (standalone Node script, the exact file the tests execute), `installShims` (`gh`/`git` → guard), `guardEnv` (shim dir first on PATH for marked sessions).
+- `shared/review.ts` + `server/{tools,reviews,post,bridge,listener}.ts`: review drafts. `inbox_review_draft` MCP tool, injected in `before("agent.create")` only for sessions with `PASEO_INBOX_RUN`, via the stdio bridge copied from paseo-prs. It saves a `ReviewDraft` per run and moves the run to needs-decision. `postDraft` (RPC `inbox.review_post`, called only by the card's Post button) posts with `gh api … /reviews --input -` from the plugin process, refusing stale or already-posted drafts. `client/ReviewDraftView.tsx` renders it on the card.
 - `server/store.ts`: `~/.paseo/inbox.json` loader (`~` expanded), `StateStore` (atomic JSON).
 - `index.server.ts`: timer, `agents.create` (`worktree: checkout-pr`, `background`, labels `inbox.run`/`inbox.pr`, env `PASEO_INBOX_RUN`), `before("agent.session_open")` applies the guard, `turn_ended`/`closed`/`archived` hooks, RPCs.
 - `client/`: `InboxScreen` (grouped runs, actions), `useInbox` (RPC polling); `index.client.tsx` registers the screen and a sidebar row with the needs-decision count.
@@ -17,6 +18,8 @@ Paseo plugin: GitHub PR searches → rules → one agent per match, with a PATH 
 - The plugin has no `paseo` handle until a hook or RPC hands one over; polling runs without it, dispatch waits (`ready`).
 - `process.execPath` in the desktop app is the Electron helper: the shims run it with `ELECTRON_RUN_AS_NODE=1`, and the guard strips that before spawning the real tool.
 - `ToolPolicy` has no deny list, and a permission hook only fires in asking modes; hence the PATH guard, and agents run in `mode` (default `auto`) so they never stall on a prompt.
+- An ask's Send prompts the same guarded agent, so it can't perform the write. Writes go through a plugin RPC behind a UI button.
+- A GitHub rate limit on agent start keeps the run queued. The daemon's checkout-pr GraphQL call is the first thing to hit the limit.
 - `checkout-pr` makes a new worktree per run (`<branch>-N`); Dismiss archives them via `paseo.workspaces.archive`.
 
 ## Commands

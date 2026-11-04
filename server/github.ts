@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import { z } from "zod";
 import { prKey, type Checks, type Pr } from "../shared/inbox";
@@ -88,4 +88,24 @@ export class GithubSource {
     this.cache.set(hit.url, { updatedAt: hit.updatedAt, pr });
     return pr;
   }
+}
+
+/** `gh <args>` with `input` on stdin; rejects with gh's stderr (GitHub's message) on failure. */
+export function ghWithInput(args: string[], input: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const child = spawn("gh", args, { env: { ...process.env, PATH } });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk) => (stdout += chunk));
+    child.stderr.on("data", (chunk) => (stderr += chunk));
+    child.on("error", reject);
+    child.on("close", (code) => (code === 0 ? resolve(stdout) : reject(new Error(stderr.trim() || `gh exited with ${code}`))));
+    child.stdin.end(input);
+  });
+}
+
+/** Posts a review on `owner/repo#number`; returns its URL. The plugin process isn't behind the agent write guard. */
+export async function postPullReview(repo: string, number: number, payload: unknown, run: (args: string[], input: string) => Promise<string> = ghWithInput): Promise<string> {
+  const out = await run(["api", "--method", "POST", `repos/${repo}/pulls/${number}/reviews`, "--input", "-"], JSON.stringify(payload));
+  return z.object({ html_url: z.string() }).parse(JSON.parse(out)).html_url;
 }

@@ -3,6 +3,7 @@ import { useRpc } from "@getpaseo/plugin/client";
 import { useMemo, useState } from "react";
 import { Linking, Pressable, ScrollView, Text, View } from "react-native";
 import { groupRuns, runNow, skipRun, type Run, type RunState } from "../shared/inbox";
+import { ReviewDraftView } from "./ReviewDraftView";
 import { useInbox } from "./useInbox";
 
 export const INBOX_SCREEN = "inbox";
@@ -75,6 +76,9 @@ export function InboxScreen({ theme, layout, navigation }: PluginScreenProps) {
           {item.itemKey} · {item.version.slice(0, 7)} · {item.rule} · {ago(item.updatedAt)}
         </Text>
         {item.reason ? <Text style={styles.muted}>{item.reason}</Text> : null}
+        {item.reason?.startsWith("review ") ? (
+          <ReviewDraftView runId={item.id} theme={theme} canPost={item.state === "needs-decision"} onPosted={() => void refresh()} />
+        ) : null}
         <View style={styles.actions}>
           {item.agentId && navigation ? <Button primary label="Open agent" onPress={() => navigation.openAgent({ agentId: item.agentId! })} /> : null}
           {pr ? <Button label="PR" onPress={() => void Linking.openURL(pr.url)} /> : null}

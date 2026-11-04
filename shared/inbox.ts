@@ -14,17 +14,20 @@ export const RuleSchema = z.object({
   labels: z.array(z.string()).optional(),
   draft: z.boolean().optional(),
   when: z.object({ checks: z.enum(["passing", "failing", "pending", "none"]).optional() }).optional(),
-  /** `claude`, `claude/claude-opus-5-5`, `codex/gpt-5.5`… Defaults to the config's `provider`. */
-  provider: z.string().optional(),
+  /** `claude/claude-opus-5-5`, `codex/gpt-5.5`… Defaults to the config's `provider`. */
+  provider: z.lazy(() => ProviderSchema).optional(),
   /** The provider's mode id. Defaults to the config's `mode`. */
   mode: z.string().optional(),
 });
 export type Rule = z.infer<typeof RuleSchema>;
 
+/** Paseo needs `provider/model`; `paseo provider models <provider>` lists the model ids. */
+const ProviderSchema = z.string().regex(/^[\w-]+\/\S+$/, 'use "provider/model", e.g. "claude/claude-opus-5-5" (see `paseo provider models claude`)');
+
 export const ConfigSchema = z.object({
   pollSeconds: z.number().int().min(60).default(300),
   maxConcurrent: z.number().int().min(1).default(2),
-  provider: z.string().default("claude"),
+  provider: ProviderSchema.default("claude/claude-opus-5-5"),
   /**
    * Inbox agents run unattended, so they need a mode that doesn't stop on permission prompts.
    * GitHub writes stay blocked by the PATH guard whatever the mode. `auto` is Claude's; set Codex's own id.
@@ -230,7 +233,8 @@ export function preamble(pr: Pr): string {
   return [
     `You were started by paseo-inbox for ${pr.url} at ${pr.headSha}.`,
     "Do not write to GitHub: no comments, reviews, labels, pushes or merges. Those commands are blocked for you.",
-    "End by creating one ask whose Send action carries the exact write to perform, so the human can approve it.",
+    "If you were asked for a review, save it with inbox_review_draft; the human posts it from the Inbox.",
+    "Otherwise end by creating one ask with your result and the exact write you propose, so the human can act on it.",
   ].join(" ");
 }
 
