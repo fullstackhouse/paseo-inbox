@@ -8,7 +8,7 @@ import { postDraft } from "../server/post";
 import { ReviewStore } from "../server/reviews";
 import { callTool } from "../server/tools";
 import { emptyState, type State } from "../shared/inbox";
-import { draftHeadline, reviewPayload, toDraft } from "../shared/review";
+import { draftHeadline, reviewPayload, toDraft, updateComment } from "../shared/review";
 import { config, NOW, pr } from "./fixtures";
 
 const input = {
@@ -115,5 +115,18 @@ describe("postPullReview", () => {
     const run = vi.fn(async () => JSON.stringify({ id: 1, html_url: "https://github.com/acme/shop/pull/7#pullrequestreview-1" }));
     expect(await postPullReview("acme/shop", 7, { event: "APPROVE" }, run)).toBe("https://github.com/acme/shop/pull/7#pullrequestreview-1");
     expect(run).toHaveBeenCalledWith(["api", "--method", "POST", "repos/acme/shop/pulls/7/reviews", "--input", "-"], '{"event":"APPROVE"}');
+  });
+});
+
+describe("updateComment", () => {
+  const draft = toDraft({ verdict: "comment", confidence: 70, summary: "s", chapters: [], comments: [{ path: "a.ts", line: 1, side: "RIGHT", severity: "nit", body: "x" }] }, { id: "r", itemKey: "k", version: "v" }, NOW);
+  it("keeps, drops and edits; an edit with no text keeps the old body", () => {
+    expect(updateComment(draft, "c1", { status: "dropped" }).comments[0]!.status).toBe("dropped");
+    expect(updateComment(draft, "c1", { body: " better " }).comments[0]).toMatchObject({ body: "better", status: "edited" });
+    expect(updateComment(draft, "c1", { body: "  " }).comments[0]!.body).toBe("x");
+  });
+  it("refuses unknown comments and posted drafts", () => {
+    expect(() => updateComment(draft, "c9", { status: "kept" })).toThrow("No comment c9");
+    expect(() => updateComment({ ...draft, postedUrl: "u" }, "c1", { status: "kept" })).toThrow("Already posted");
   });
 });

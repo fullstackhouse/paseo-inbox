@@ -56,6 +56,9 @@ export const PrSchema = z.object({
   labels: z.array(z.string()),
   files: z.array(z.string()),
   checks: ChecksSchema,
+  author: z.string().default(""),
+  additions: z.number().default(0),
+  deletions: z.number().default(0),
 });
 export type Pr = z.infer<typeof PrSchema>;
 

@@ -11,6 +11,7 @@ Paseo plugin: GitHub PR searches → rules → one agent per match, with a PATH 
 - `shared/review.ts` + `server/{tools,reviews,post,bridge,listener}.ts`: review drafts. `inbox_review_draft` MCP tool, injected in `before("agent.create")` only for sessions with `PASEO_INBOX_RUN`, via the stdio bridge copied from paseo-prs. It saves a `ReviewDraft` per run and moves the run to needs-decision. `postDraft` (RPC `inbox.review_post`, called only by the card's Post button) posts with `gh api … /reviews --input -` from the plugin process, refusing stale or already-posted drafts. `client/ReviewDraftView.tsx` renders it on the card.
 - `server/store.ts`: `~/.paseo/inbox.json` loader (`~` expanded), `StateStore` (atomic JSON).
 - `index.server.ts`: timer, `agents.create` (`worktree: checkout-pr`, `background`, labels `inbox.run`/`inbox.pr`, env `PASEO_INBOX_RUN`), `before("agent.session_open")` applies the guard, `turn_ended`/`closed`/`archived` hooks, RPCs.
+- Review screen: `client/ReviewScreen.tsx` (header, sticky tabs, post bar, prev/next via `reviewQueue`), `FileDiff` (`shared/diff.ts` `parsePatch` + `anchors`), `CommentCard` (keep/edit/drop through RPC `inbox.review_comment` → `updateComment`), `Markdown` (`shared/markdown.ts`, native Text). PR body and file patches come from RPC `inbox.pr_get` → `PrDetailsCache` (`gh api pulls/N` + `/files --paginate --slurp`, cached per head SHA). Screens get no `openScreen` prop, so `client/nav.ts` holds the client's.
 - `client/`: `InboxScreen` (grouped runs, actions), `useInbox` (RPC polling); `index.client.tsx` registers the screen and a sidebar row with the needs-decision count.
 
 ## Load-bearing facts (Paseo 0.12)
@@ -26,4 +27,5 @@ Paseo plugin: GitHub PR searches → rules → one agent per match, with a PATH 
 
 - `npm run typecheck`, `npm test`.
 - After edits: `paseo plugin reload paseo-inbox`; `paseo plugin ls` must say `running`; logs: `paseo plugin logs paseo-inbox`. Never restart the daemon.
+- UI check without the daemon password: copy `plugin-data/inbox` to `/tmp/inbox-ui`, write its `config.json` (listen `127.0.0.1:6790`, CORS `http://127.0.0.1:6767`, `pluginsEnabled`, and no `inbox.json`), run `paseo daemon run --home /tmp/inbox-ui`, install the plugin with `--home`, then open `http://127.0.0.1:6767` in Playwright and use Direct connection to `127.0.0.1:6790`.
 - Live check: a temporary `inbox.json` with one `once` rule on your own PR and harmless commands (`gh pr comment 999999`, `git push --dry-run`); delete the agent, its worktree, and the config afterwards.

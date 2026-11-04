@@ -1,9 +1,11 @@
 import type { PluginScreenProps } from "@getpaseo/plugin/client";
 import { useRpc } from "@getpaseo/plugin/client";
 import { useMemo, useState } from "react";
-import { Linking, Pressable, ScrollView, Text, View } from "react-native";
+import { Pressable, ScrollView, Text, View } from "react-native";
 import { groupRuns, runNow, skipRun, type Run, type RunState } from "../shared/inbox";
-import { ReviewDraftView } from "./ReviewDraftView";
+import { openScreen } from "./nav";
+import { REVIEW_SCREEN } from "./ReviewScreen";
+import { ago, Chip, MONO, Pill, verdictColor } from "./ui";
 import { useInbox } from "./useInbox";
 
 export const INBOX_SCREEN = "inbox";
@@ -19,32 +21,25 @@ const HEADINGS: Record<RunState, string> = {
   skipped: "Skipped",
 };
 
+/** `review drafted: approve · 90% · 2 nit` → verdict and the rest. */
+function drafted(run: Run): { verdict: string; detail: string } | null {
+  const match = /^review drafted: ([\w-]+) · (.*)$/.exec(run.reason ?? "");
+  return match ? { verdict: match[1]!, detail: match[2]! } : null;
+}
+
 export function InboxScreen({ theme, layout, navigation }: PluginScreenProps) {
   const { view, error, polling, refresh, pollNow } = useInbox();
-  const run = useRpc(runNow);
-  const skip = useRpc(skipRun);
+  const rerun = useRpc(runNow);
+  const dismiss = useRpc(skipRun);
   const [busy, setBusy] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [showSettled, setShowSettled] = useState(false);
   const groups = useMemo(() => groupRuns(view?.runs ?? []), [view]);
-
-  const styles = useMemo(
-    () => ({
-      screen: { flex: 1, backgroundColor: theme.colors.surface0 },
-      content: { padding: layout.compact ? 12 : 24, gap: 16 },
-      bar: { flexDirection: "row" as const, alignItems: "center" as const, justifyContent: "space-between" as const, gap: 12 },
-      muted: { color: theme.colors.foregroundMuted, fontSize: 13 },
-      error: { color: theme.colors.statusDanger, fontSize: 13 },
-      heading: { color: theme.colors.foregroundMuted, fontSize: 12, fontWeight: "600" as const, textTransform: "uppercase" as const, letterSpacing: 0.5 },
-      card: { backgroundColor: theme.colors.surface1, borderRadius: 10, padding: 12, gap: 6 },
-      title: { color: theme.colors.foreground, fontSize: 15, fontWeight: "500" as const },
-      actions: { flexDirection: "row" as const, flexWrap: "wrap" as const, gap: 8, marginTop: 4 },
-      button: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, backgroundColor: theme.colors.surface2 },
-      primary: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, backgroundColor: theme.colors.accent },
-      buttonText: { color: theme.colors.foreground, fontSize: 13 },
-      primaryText: { color: theme.colors.accentForeground, fontSize: 13 },
-    }),
-    [theme, layout.compact],
-  );
+  const settled = new Set<RunState>(["done", "skipped", "stale"]);
+  const shown = groups.filter((group) => showSettled || !settled.has(group.state));
+  const hidden = groups.filter((group) => settled.has(group.state)).reduce((sum, group) => sum + group.runs.length, 0);
+  const pad = layout.compact ? 12 : 24;
+  const muted = { color: theme.colors.foregroundMuted, fontSize: 13 };
 
   const act = async (key: string, action: () => Promise<unknown>) => {
     setBusy(key);
@@ -59,68 +54,69 @@ export function InboxScreen({ theme, layout, navigation }: PluginScreenProps) {
     }
   };
 
-  const Button = ({ label, onPress, primary, disabled }: { label: string; onPress: () => void; primary?: boolean; disabled?: boolean }) => (
-    <Pressable accessibilityRole="button" accessibilityLabel={label} disabled={disabled} onPress={onPress} style={[primary ? styles.primary : styles.button, disabled ? { opacity: 0.5 } : null]}>
-      <Text style={primary ? styles.primaryText : styles.buttonText}>{label}</Text>
-    </Pressable>
-  );
-
-  const Card = ({ item }: { item: Run }) => {
-    const pr = view?.items[item.itemKey]?.pr;
-    const key = `${item.itemKey}|${item.rule}`;
-    const disabled = busy === key;
+  const Row = ({ run }: { run: Run }) => {
+    const pr = view?.items[run.itemKey]?.pr;
+    const draft = drafted(run);
+    const key = `${run.itemKey}|${run.rule}`;
+    const open = () => {
+      if (draft || run.reason?.startsWith("review ")) openScreen({ screenId: REVIEW_SCREEN, params: { runId: run.id } });
+      else if (run.agentId && navigation) navigation.openAgent({ agentId: run.agentId });
+    };
+    const tappable = Boolean(draft || run.reason?.startsWith("review ") || (run.agentId && navigation));
     return (
-      <View style={styles.card}>
-        <Text style={styles.title} numberOfLines={2}>{pr?.title ?? item.itemKey}</Text>
-        <Text style={styles.muted}>
-          {item.itemKey} · {item.version.slice(0, 7)} · {item.rule} · {ago(item.updatedAt)}
-        </Text>
-        {item.reason ? <Text style={styles.muted}>{item.reason}</Text> : null}
-        {item.reason?.startsWith("review ") ? (
-          <ReviewDraftView runId={item.id} theme={theme} canPost={item.state === "needs-decision"} onPosted={() => void refresh()} />
-        ) : null}
-        <View style={styles.actions}>
-          {item.agentId && navigation ? <Button primary label="Open agent" onPress={() => navigation.openAgent({ agentId: item.agentId! })} /> : null}
-          {pr ? <Button label="PR" onPress={() => void Linking.openURL(pr.url)} /> : null}
-          {item.state !== "running" && item.state !== "queued" ? (
-            <Button label={item.agentId ? "Rerun" : "Run now"} disabled={disabled} onPress={() => void act(key, () => run({ itemKey: item.itemKey, rule: item.rule }))} />
+      <Pressable accessibilityRole={tappable ? "button" : undefined} disabled={!tappable} onPress={open} style={({ pressed }) => ({ backgroundColor: pressed ? theme.colors.surface2 : theme.colors.surface1, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, gap: 4 })}>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+          <Text style={{ ...muted, fontFamily: MONO, fontSize: 12, flex: 1 }} numberOfLines={1}>
+            {run.itemKey.replace(/^[^/]+\//, "")}
+            {pr?.author ? `  ·  ${pr.author}` : ""}
+          </Text>
+          {pr ? (
+            <Text style={{ fontFamily: MONO, fontSize: 12 }}>
+              <Text style={{ color: theme.colors.statusSuccess }}>+{pr.additions}</Text> <Text style={{ color: theme.colors.statusDanger }}>−{pr.deletions}</Text>
+            </Text>
           ) : null}
-          {item.state !== "running" && item.state !== "done" ? (
-            <Button label="Dismiss" disabled={disabled} onPress={() => void act(key, () => skip({ itemKey: item.itemKey, rule: item.rule }))} />
+          <Text style={{ ...muted, fontSize: 12 }}>{ago(run.updatedAt)}</Text>
+        </View>
+        <Text style={{ color: theme.colors.foreground, fontSize: 15, fontWeight: "500", lineHeight: 20 }} numberOfLines={2}>
+          {pr?.title ?? run.itemKey}
+        </Text>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          {draft ? <Pill theme={theme} color={verdictColor(theme, draft.verdict)}>{draft.verdict}</Pill> : null}
+          <Text style={{ ...muted, flex: 1 }} numberOfLines={2}>
+            {draft ? draft.detail : run.reason ?? run.rule}
+          </Text>
+          {run.state !== "running" && run.state !== "queued" ? (
+            <Chip theme={theme} label={run.agentId ? "Rerun" : "Run now"} disabled={busy === key} style={{ paddingVertical: 4, paddingHorizontal: 10 }} textStyle={{ fontSize: 12 }} onPress={() => void act(key, () => rerun({ itemKey: run.itemKey, rule: run.rule }))} />
+          ) : null}
+          {run.state !== "running" && run.state !== "done" ? (
+            <Chip theme={theme} label="Dismiss" disabled={busy === key} style={{ paddingVertical: 4, paddingHorizontal: 10 }} textStyle={{ fontSize: 12 }} onPress={() => void act(key, () => dismiss({ itemKey: run.itemKey, rule: run.rule }))} />
           ) : null}
         </View>
-      </View>
+      </Pressable>
     );
   };
 
   return (
-    <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
-      <View style={styles.bar}>
-        <Text style={styles.muted}>{view?.lastPollAt ? `Last poll ${ago(view.lastPollAt)}` : "Not polled yet"}</Text>
-        <Button label={polling ? "Polling…" : "Poll now"} disabled={polling} onPress={() => void pollNow()} />
+    <ScrollView style={{ flex: 1, backgroundColor: theme.colors.surface0 }} contentContainerStyle={{ padding: pad, gap: 14, width: "100%", maxWidth: 900, alignSelf: "center" }}>
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
+        <Text style={{ ...muted, flex: 1 }}>{view?.lastPollAt ? `Polled ${ago(view.lastPollAt)} ago` : "Not polled yet"}</Text>
+        <Chip theme={theme} label={polling ? "Polling…" : "Poll now"} disabled={polling} onPress={() => void pollNow()} />
       </View>
       {[error, actionError, ...(view?.errors ?? [])].filter(Boolean).map((message) => (
-        <Text key={message} style={styles.error}>{message}</Text>
+        <Text key={message} style={{ color: theme.colors.statusDanger, fontSize: 13 }}>{message}</Text>
       ))}
-      {view && !groups.length ? <Text style={styles.muted}>Nothing to do.</Text> : null}
-      {groups.map((group) => (
-        <View key={group.state} style={{ gap: 8 }}>
-          <Text style={styles.heading}>
-            {HEADINGS[group.state]} ({group.runs.length})
+      {view && !shown.length ? <Text style={muted}>Nothing to do.</Text> : null}
+      {shown.map((group) => (
+        <View key={group.state} style={{ gap: 6 }}>
+          <Text style={{ color: theme.colors.foregroundMuted, fontSize: 12, fontWeight: "600", letterSpacing: 0.5 }}>
+            {HEADINGS[group.state].toUpperCase()}  {group.runs.length}
           </Text>
-          {group.runs.map((item) => (
-            <Card key={item.id} item={item} />
+          {group.runs.map((run) => (
+            <Row key={run.id} run={run} />
           ))}
         </View>
       ))}
+      {hidden ? <Chip theme={theme} label={showSettled ? "Hide done, stale and skipped" : `Show done, stale and skipped (${hidden})`} onPress={() => setShowSettled(!showSettled)} style={{ alignSelf: "flex-start" }} /> : null}
     </ScrollView>
   );
-}
-
-function ago(iso: string): string {
-  const minutes = Math.round((Date.now() - Date.parse(iso)) / 60_000);
-  if (minutes < 1) return "just now";
-  if (minutes < 60) return `${minutes} min ago`;
-  const hours = Math.round(minutes / 60);
-  return hours < 48 ? `${hours} h ago` : `${Math.round(hours / 24)} d ago`;
 }

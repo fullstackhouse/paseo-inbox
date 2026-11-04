@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { GithubSource, queryArgs, summarizeChecks } from "../server/github";
+import { GithubSource, PrDetailsCache, queryArgs, summarizeChecks } from "../server/github";
 
 describe("summarizeChecks", () => {
   it("prefers failing, then pending, then passing", () => {
@@ -27,8 +27,9 @@ describe("GithubSource", () => {
     updatedAt,
     labels: [{ name: "needs-qa" }],
     repository: { nameWithOwner: "Acme/Shop" },
+    author: { login: "ola" },
   });
-  const details = { headRefOid: "abc", files: [{ path: "src/a.tsx" }], statusCheckRollup: [{ status: "COMPLETED", conclusion: "FAILURE" }] };
+  const details = { headRefOid: "abc", files: [{ path: "src/a.tsx" }], statusCheckRollup: [{ status: "COMPLETED", conclusion: "FAILURE" }], additions: 5, deletions: 1 };
 
   it("maps a search to PRs and fetches details only when the PR changed", async () => {
     let updatedAt = "2026-11-04T10:00:00Z";
@@ -46,12 +47,34 @@ describe("GithubSource", () => {
       labels: ["needs-qa"],
       files: ["src/a.tsx"],
       checks: "failing",
+      author: "ola",
+      additions: 5,
+      deletions: 1,
     });
     expect(run.mock.calls[0]![0].slice(0, 4)).toEqual(["search", "prs", "is:open", "label:needs-qa"]);
     await source.search("is:open label:needs-qa");
     expect(run).toHaveBeenCalledTimes(3);
     updatedAt = "2026-11-04T11:00:00Z";
     await source.search("is:open label:needs-qa");
+    expect(run).toHaveBeenCalledTimes(5);
+  });
+});
+
+describe("PrDetailsCache", () => {
+  const pull = (sha: string) => ({ body: "## Why", user: { login: "ola" }, base: { ref: "main" }, head: { ref: "feat/x", sha }, additions: 5, deletions: 1, changed_files: 1, created_at: "2026-11-04T10:00:00Z" });
+  const files = [[{ filename: "src/a.tsx", status: "modified", additions: 5, deletions: 1, patch: "@@ -1 +1 @@\n-a\n+b" }], [{ filename: "logo.png", status: "added", additions: 0, deletions: 0 }]];
+
+  it("reads description and every file page, and refetches files only after a push", async () => {
+    let sha = "abc";
+    const run = vi.fn(async (args: string[]) => JSON.stringify(args.includes("--paginate") ? files : pull(sha)));
+    const cache = new PrDetailsCache(run);
+    const details = await cache.get("acme/shop", 7);
+    expect(details).toMatchObject({ body: "## Why", author: "ola", baseRef: "main", headRef: "feat/x", headSha: "abc", changedFiles: 1 });
+    expect(details.files.map((file) => [file.path, file.patch !== undefined])).toEqual([["src/a.tsx", true], ["logo.png", false]]);
+    await cache.get("acme/shop", 7);
+    expect(run).toHaveBeenCalledTimes(3);
+    sha = "def";
+    await cache.get("acme/shop", 7);
     expect(run).toHaveBeenCalledTimes(5);
   });
 });
