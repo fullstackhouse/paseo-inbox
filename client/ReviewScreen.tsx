@@ -71,6 +71,7 @@ export function ReviewScreen({ theme, layout, navigation, params }: PluginScreen
 
   const [draft, setDraft] = useState<ReviewDraft | null>(null);
   const [details, setDetails] = useState<PrDetails | null>(null);
+  const [detailsFor, setDetailsFor] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>("summary");
@@ -122,7 +123,11 @@ export function ReviewScreen({ theme, layout, navigation, params }: PluginScreen
     let live = true;
     setDetails(null);
     void fetchDetails({ itemKey })
-      .then((value) => live && setDetails(value))
+      .then((value) => {
+        if (!live) return;
+        setDetails(value);
+        setDetailsFor(itemKey);
+      })
       .catch((caught) => live && fail(caught));
     return () => {
       live = false;
@@ -130,6 +135,14 @@ export function ReviewScreen({ theme, layout, navigation, params }: PluginScreen
   }, [fetchDetails, itemKey]);
 
   const files = details?.files ?? [];
+  // Like Cerber and GitHub, diffs (with their comments) start open; big uncommented files fold
+  // themselves, and files already marked viewed start closed.
+  const opened = useRef<string | null>(null);
+  useEffect(() => {
+    if (!details || detailsFor !== itemKey || opened.current === runId) return;
+    opened.current = runId;
+    setOpenFiles(new Set(details.files.filter((file) => !isViewed(draft, file)).map((file) => file.path)));
+  }, [details, detailsFor, itemKey, draft, runId]);
   const chapters = useMemo(() => (draft ? walkthrough(draft, files) : []), [draft, files]);
   const commentsByFile = useMemo(() => {
     const map = new Map<string, ReviewDraft["comments"]>();
@@ -388,7 +401,8 @@ export function ReviewScreen({ theme, layout, navigation, params }: PluginScreen
             </>
           ) : null}
 
-          {tab === "walkthrough" && draft
+          {tab === "walkthrough" && draft && !details ? <ActivityIndicator color={theme.colors.foregroundMuted} /> : null}
+          {tab === "walkthrough" && draft && details
             ? chapters.map((chapter, index) => (
                 <View key={chapter.title + index} style={{ gap: 8, paddingBottom: 8 }}>
                   <Text style={{ color: theme.colors.foreground, fontSize: 16, fontWeight: "700" }}>
