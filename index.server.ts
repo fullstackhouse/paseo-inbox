@@ -1,6 +1,7 @@
 import type { PaseoApi } from "@getpaseo/client";
 import type { PluginServerContext } from "@getpaseo/plugin/server";
 import { installBridge } from "./server/bridge";
+import { openInBrowser } from "./server/open";
 import { GithubSource, postPullReview, PrDetailsCache } from "./server/github";
 import { guardEnv, installShims, RUN_ENV } from "./server/guard";
 import { Inbox, type StartRequest } from "./server/inbox";
@@ -20,6 +21,7 @@ import {
   getReview,
   INSTRUCTIONS,
   MCP_SERVER,
+  openExternal,
   patchPrint,
   postReview,
   setFileViewed,
@@ -165,6 +167,11 @@ export default function contribute(server: PluginServerContext) {
       else delete next[path];
       return { ...draft, viewed: next };
     });
+  });
+  server.handle(openExternal, async ({ url }, { paseo: api }) => {
+    capture(api);
+    await openInBrowser(url);
+    return { ok: true as const };
   });
   server.handle(discussReview, async ({ runId, message }, { paseo: api }) => {
     capture(api);

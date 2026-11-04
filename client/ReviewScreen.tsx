@@ -1,7 +1,7 @@
 import type { PluginScreenProps } from "@getpaseo/plugin/client";
 import { useRpc } from "@getpaseo/plugin/client";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, Linking, Pressable, ScrollView, Text, View } from "react-native";
+import { ActivityIndicator, Pressable, ScrollView, Text, View } from "react-native";
 import { runNow, skipRun, type Run } from "../shared/inbox";
 import {
   addReviewComment,
@@ -28,6 +28,7 @@ import {
 import { CommentCard } from "./CommentCard";
 import { FileDiff, type DiffActions } from "./FileDiff";
 import { Markdown } from "./Markdown";
+import { useOpenUrl } from "./openUrl";
 import { ago, Chip, MONO, Pill, verdictColor } from "./ui";
 import { useInbox } from "./useInbox";
 
@@ -66,6 +67,7 @@ export function ReviewScreen({ theme, layout, navigation, params }: PluginScreen
   const redraft = useRpc(runNow);
   const dismiss = useRpc(skipRun);
   const markViewed = useRpc(setFileViewed);
+  const openUrl = useOpenUrl();
 
   const [draft, setDraft] = useState<ReviewDraft | null>(null);
   const [details, setDetails] = useState<PrDetails | null>(null);
@@ -345,7 +347,7 @@ export function ReviewScreen({ theme, layout, navigation, params }: PluginScreen
             {stale ? <Pill theme={theme} color={theme.colors.statusWarning}>new commits since this draft</Pill> : null}
             {draft?.postedUrl ? <Pill theme={theme} color={theme.colors.statusSuccess}>posted</Pill> : null}
             <View style={{ flex: 1 }} />
-            <Chip theme={theme} label="GitHub ↗" onPress={() => void Linking.openURL(pr.url)} />
+            <Chip theme={theme} label="GitHub ↗" onPress={() => openUrl(pr.url)} />
             {run.agentId && navigation ? <Chip theme={theme} label="Reviewer chat" onPress={() => navigation.openAgent({ agentId: run.agentId! })} /> : null}
           </View>
           {stale && run.state !== "running" ? (
@@ -507,7 +509,7 @@ export function ReviewScreen({ theme, layout, navigation, params }: PluginScreen
         </View>
       ) : draft?.postedUrl ? (
         <View style={{ borderTopWidth: 1, borderTopColor: theme.colors.border, padding: 12, flexDirection: "row", gap: 10, justifyContent: "center", backgroundColor: theme.colors.surface1 }}>
-          <Chip theme={theme} label={`Posted as ${draft.postedVerdict ?? draft.verdict} ↗`} onPress={() => void Linking.openURL(draft.postedUrl!)} />
+          <Chip theme={theme} label={`Posted as ${draft.postedVerdict ?? draft.verdict} ↗`} onPress={() => openUrl(draft.postedUrl!)} />
           {next ? <Chip theme={theme} active label="Next review ›" onPress={() => setRunId(next)} /> : null}
         </View>
       ) : null}

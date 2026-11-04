@@ -1,10 +1,12 @@
 import type { PluginTheme } from "@getpaseo/plugin";
 import { Fragment, useMemo, type ReactNode } from "react";
-import { Linking, ScrollView, Text, View } from "react-native";
+import { ScrollView, Text, View } from "react-native";
+import { useOpenUrl } from "./openUrl";
 import { parseMarkdown, type Block, type Inline } from "../shared/markdown";
 import { MONO, tint } from "./ui";
 
 function Inlines({ inlines, theme, size }: { inlines: Inline[]; theme: PluginTheme; size: number }) {
+  const openUrl = useOpenUrl();
   return (
     <>
       {inlines.map((inline, index) => {
@@ -20,7 +22,7 @@ function Inlines({ inlines, theme, size }: { inlines: Inline[]; theme: PluginThe
           case "code":
             return <Text key={index} style={{ fontFamily: MONO, fontSize: size - 1, backgroundColor: theme.colors.surface2 }}> {inline.text} </Text>;
           case "link":
-            return <Text key={index} style={{ color: theme.colors.accent, textDecorationLine: "underline" }} onPress={() => void Linking.openURL(inline.url)}>{inline.text}</Text>;
+            return <Text key={index} style={{ color: theme.colors.accent, textDecorationLine: "underline" }} onPress={() => openUrl(inline.url)}>{inline.text}</Text>;
           default:
             return <Text key={index}>{inline.text}</Text>;
         }

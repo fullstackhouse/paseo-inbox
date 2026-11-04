@@ -407,6 +407,8 @@ export const addReviewComment = defineRpc({
 export const deleteReviewComment = defineRpc({ name: "inbox.review_comment_delete", input: z.object({ runId: z.string(), commentId: z.string() }), output: ReviewDraftSchema });
 export const setReviewVerdict = defineRpc({ name: "inbox.review_verdict", input: z.object({ runId: z.string(), verdict: VerdictSchema.nullable() }), output: ReviewDraftSchema });
 export const setFileViewed = defineRpc({ name: "inbox.review_viewed", input: z.object({ runId: z.string(), path: z.string(), patch: z.string().optional(), viewed: z.boolean() }), output: ReviewDraftSchema });
+/** Opens an http(s) link in the system browser on the daemon's machine (the desktop app's own window isn't signed in). */
+export const openExternal = defineRpc({ name: "inbox.open_url", input: z.object({ url: z.string().regex(/^https?:\/\//) }), output: ok });
 export const postReview = defineRpc({ name: "inbox.review_post", input: z.object({ runId: z.string() }), output: z.object({ url: z.string(), inline: z.number(), folded: z.number() }) });
 /** Sends a message to the run's reviewer agent (with what it's about quoted) so the human can then open it. */
 export const discussReview = defineRpc({ name: "inbox.review_discuss", input: z.object({ runId: z.string(), message: z.string().min(1) }), output: ok });
