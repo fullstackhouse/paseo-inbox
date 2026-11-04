@@ -10,7 +10,24 @@ import { ReviewStore } from "./server/reviews";
 import { dataDir, loadConfig, StateStore } from "./server/store";
 import { callTool, isInboxPermission, PREAPPROVED } from "./server/tools";
 import { listInbox, pollNow, runNow, skipRun } from "./shared/inbox";
-import { getPrDetails, getReview, INSTRUCTIONS, MCP_SERVER, postReview, TOOLS, updateComment, updateReviewComment } from "./shared/review";
+import {
+  addHumanComment,
+  addReviewComment,
+  deleteHumanComment,
+  deleteReviewComment,
+  discussReview,
+  getPrDetails,
+  getReview,
+  INSTRUCTIONS,
+  MCP_SERVER,
+  postReview,
+  setReviewVerdict,
+  severityFromRpc,
+  TOOLS,
+  updateComment,
+  updateReviewComment,
+  type ReviewDraft,
+} from "./shared/review";
 
 export const RUN_LABEL = "inbox.run";
 export const PR_LABEL = "inbox.pr";
@@ -110,18 +127,45 @@ export default function contribute(server: PluginServerContext) {
     if (!item) throw new Error(`Unknown PR ${itemKey}`);
     return prDetails.get(item.pr.repo, item.pr.number);
   });
-  server.handle(updateReviewComment, ({ runId, commentId, status, body }, { paseo: api }) => {
-    capture(api);
+  const editDraft = (runId: string, change: (draft: ReviewDraft) => ReviewDraft) => {
     const draft = reviews.get(runId);
     if (!draft) throw new Error("No review draft for this run");
-    const next = updateComment(draft, commentId, body !== undefined ? { body } : { status: status ?? "kept" });
+    const next = change(draft);
     reviews.save(next);
     return next;
+  };
+  server.handle(updateReviewComment, ({ runId, commentId, status, body, severity }, { paseo: api }) => {
+    capture(api);
+    return editDraft(runId, (draft) =>
+      updateComment(draft, commentId, body !== undefined ? { body } : severity !== undefined ? { severity: severityFromRpc(severity) } : { status: status ?? "kept" }),
+    );
+  });
+  server.handle(addReviewComment, ({ runId, severity, ...comment }, { paseo: api }) => {
+    capture(api);
+    return editDraft(runId, (draft) => addHumanComment(draft, { ...comment, severity: severityFromRpc(severity) }));
+  });
+  server.handle(deleteReviewComment, ({ runId, commentId }, { paseo: api }) => {
+    capture(api);
+    return editDraft(runId, (draft) => deleteHumanComment(draft, commentId));
+  });
+  server.handle(setReviewVerdict, ({ runId, verdict }, { paseo: api }) => {
+    capture(api);
+    return editDraft(runId, (draft) => {
+      if (draft.postedUrl) throw new Error("Already posted");
+      return { ...draft, verdictOverride: verdict === null || verdict === draft.verdict ? undefined : verdict };
+    });
+  });
+  server.handle(discussReview, async ({ runId, message }, { paseo: api }) => {
+    capture(api);
+    const agentId = inbox.run(runId)?.agentId;
+    if (!agentId) throw new Error("This run has no reviewer agent");
+    await api.agents.ref(agentId).send(message);
+    return { ok: true as const };
   });
   // The only path from a review draft to GitHub: the Inbox screen's Post button.
   server.handle(postReview, ({ runId }, { paseo: api }) => {
     capture(api);
-    return postDraft(inbox, reviews, runId, (repo, number, payload) => postPullReview(repo, number, payload));
+    return postDraft(inbox, reviews, runId, (repo, number, payload) => postPullReview(repo, number, payload), (repo, number) => prDetails.get(repo, number));
   });
 
   const listening = listen(dir, {
