@@ -35,7 +35,7 @@ Paseo shows an **Inbox** row in the sidebar. It does nothing until you write `~/
   },
   "rules": [
     { "name": "draft-review", "source": "review-requested", "rerun": "on-push",
-      "prompt": "Run `npx @fullstackhouse/cerber review {{pr.url}}`, then create an ask linking to the draft." },
+      "prompt": "Review {{pr.url}}: read the diff and the code around it, then create an ask with your review and a Send action that posts it." },
     { "name": "qa-screenshots", "source": "needs-qa", "paths": ["**/*.tsx", "packages/ui/src/**"],
       "prompt": "/om-auto-qa-pr {{pr.number}}" },
     { "name": "fix-red-ci", "source": "mine", "when": { "checks": "failing" }, "rerun": "once",
