@@ -58,7 +58,10 @@ Inbox agents get one MCP tool, `inbox_review_draft`. It takes a verdict, a confi
 - **Tabs:** Summary, Walkthrough (the reviewer's chapters with their files), Files (every file with its diff and the drafted comments under their lines, plus Expand all, Collapse all and Only commented), Description (the author's PR body), and Comments.
 - **Comments:** each one can be kept, edited, dropped or restored.
 - **Moving between drafts:** ‹ › steps through the other drafts waiting for you.
-- **Posting:** the bottom bar posts the review after a confirm, with the inline comments you didn't drop. If the PR has new commits since the draft, Post is refused: rerun to draft again.
+- **Reading:** syntax colours in diffs. A markdown file the PR adds opens as a document, with comments under their paragraphs (Diff is one tap away). Markdown tables render. Each file has a Viewed box, which unticks if the file changes; "Not viewed" opens only the files you haven't seen. Tapping a comment's path jumps to its file.
+- **Your comments:** tap any diff line, or "Comment on the whole file", to add your own or to ask the reviewer about it. Regrade any comment (blocker, minor, nit, note).
+- **Talking to the reviewer:** "Ask about this" sends the agent a quoted message and opens it. Its changes arrive through `inbox_review_revise`, which never touches comments you wrote or decided on.
+- **Posting:** pick the verdict (a hint warns when it disagrees with the blockers still standing), then post. The bottom bar posts the review after a confirm, with the inline comments you didn't drop. If the PR has new commits since the draft, Post is refused: rerun to draft again.
 
 ## The write guard
 

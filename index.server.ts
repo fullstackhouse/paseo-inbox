@@ -1,6 +1,7 @@
 import type { PaseoApi } from "@getpaseo/client";
 import type { PluginServerContext } from "@getpaseo/plugin/server";
 import { installBridge } from "./server/bridge";
+import { openInBrowser } from "./server/open";
 import { GithubSource, postPullReview, PrDetailsCache } from "./server/github";
 import { guardEnv, installShims, RUN_ENV } from "./server/guard";
 import { Inbox, type StartRequest } from "./server/inbox";
@@ -20,7 +21,10 @@ import {
   getReview,
   INSTRUCTIONS,
   MCP_SERVER,
+  openExternal,
+  patchPrint,
   postReview,
+  setFileViewed,
   setReviewVerdict,
   severityFromRpc,
   TOOLS,
@@ -154,6 +158,20 @@ export default function contribute(server: PluginServerContext) {
       if (draft.postedUrl) throw new Error("Already posted");
       return { ...draft, verdictOverride: verdict === null || verdict === draft.verdict ? undefined : verdict };
     });
+  });
+  server.handle(setFileViewed, ({ runId, path, patch, viewed }, { paseo: api }) => {
+    capture(api);
+    return editDraft(runId, (draft) => {
+      const next = { ...draft.viewed };
+      if (viewed) next[path] = patchPrint(patch);
+      else delete next[path];
+      return { ...draft, viewed: next };
+    });
+  });
+  server.handle(openExternal, async ({ url }, { paseo: api }) => {
+    capture(api);
+    await openInBrowser(url);
+    return { ok: true as const };
   });
   server.handle(discussReview, async ({ runId, message }, { paseo: api }) => {
     capture(api);

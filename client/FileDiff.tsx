@@ -2,9 +2,12 @@ import type { PluginTheme } from "@getpaseo/plugin";
 import { useMemo, useState } from "react";
 import { Platform, Pressable, Text, View } from "react-native";
 import { anchors, parsePatch, type DiffLine } from "../shared/diff";
+import { highlightLine, languageFor, type Token } from "../shared/highlight";
+import { addedText, isMarkdownPath } from "../shared/markdown";
 import type { PrFile, Severity, StoredComment } from "../shared/review";
 import { CommentCard, Composer, type CommentChange } from "./CommentCard";
-import { MONO, tint } from "./ui";
+import { Markdown } from "./Markdown";
+import { Chip, MONO, tint } from "./ui";
 
 const BIG = 300;
 // Long tokens (URLs, hashes) wrap anywhere instead of running off the line; native Text already does.
@@ -27,8 +30,43 @@ type Target = { line: number | null; side: "LEFT" | "RIGHT"; text?: string };
  * on the whole file sit at the top, comments off the diff at the bottom. Tapping a line opens a
  * composer under it.
  */
-export function FileDiff({ file, comments, theme, compact, open, onToggle, actions }: { file: PrFile; comments: StoredComment[]; theme: PluginTheme; compact: boolean; open: boolean; onToggle: () => void; actions: DiffActions }) {
+export function FileDiff({
+  file,
+  comments,
+  theme,
+  compact,
+  open,
+  onToggle,
+  actions,
+  viewed,
+  onViewed,
+}: {
+  file: PrFile;
+  comments: StoredComment[];
+  theme: PluginTheme;
+  compact: boolean;
+  open: boolean;
+  onToggle: () => void;
+  actions: DiffActions;
+  viewed?: boolean;
+  onViewed?: (viewed: boolean) => void;
+}) {
   const hunks = useMemo(() => (open ? parsePatch(file.patch) : []), [open, file.patch]);
+  // A markdown file the PR adds reads better as the document it is; the diff stays one tap away.
+  const docText = useMemo(() => (isMarkdownPath(file.path) ? addedText(file.patch) : null), [file.path, file.patch]);
+  const [asDoc, setAsDoc] = useState(true);
+  const showDoc = docText !== null && asDoc;
+  const highlighted = useMemo(() => {
+    const language = languageFor(file.path);
+    let inBlock = false;
+    return hunks.map((hunk) =>
+      hunk.lines.map((line) => {
+        const result = highlightLine(line.text, language, inBlock);
+        inBlock = result.inBlock;
+        return result.tokens;
+      }),
+    );
+  }, [hunks, file.path]);
   const total = hunks.reduce((sum, hunk) => sum + hunk.lines.length, 0);
   const [showBig, setShowBig] = useState(false);
   const [target, setTarget] = useState<Target | null>(null);
@@ -80,6 +118,11 @@ export function FileDiff({ file, comments, theme, compact, open, onToggle, actio
           <Text style={{ color: theme.colors.foreground, fontWeight: "600" }}>{name}</Text>
         </Text>
         {live ? <Text style={{ color: theme.colors.accentForeground, backgroundColor: theme.colors.accent, borderRadius: 999, paddingHorizontal: 7, fontSize: 12, overflow: "hidden" }}>{live}</Text> : null}
+        {onViewed ? (
+          <Text accessibilityRole="checkbox" accessibilityState={{ checked: Boolean(viewed) }} accessibilityLabel={`Viewed ${file.path}`} onPress={() => onViewed(!viewed)} style={{ fontSize: 16, color: viewed ? theme.colors.statusSuccess : theme.colors.foregroundMuted, paddingHorizontal: 2 }}>
+            {viewed ? "☑" : "☐"}
+          </Text>
+        ) : null}
         <Text style={{ fontFamily: MONO, fontSize: 12 }}>
           <Text style={{ color: theme.colors.statusSuccess }}>+{file.additions}</Text> <Text style={{ color: theme.colors.statusDanger }}>−{file.deletions}</Text>
         </Text>
@@ -98,7 +141,26 @@ export function FileDiff({ file, comments, theme, compact, open, onToggle, actio
               ) : null}
             </View>
           ) : null}
-          {!file.patch ? (
+          {docText !== null ? (
+            <View style={{ flexDirection: "row", gap: 6, paddingHorizontal: 8, paddingVertical: 6, backgroundColor: theme.colors.surface0 }}>
+              <Chip theme={theme} label="Document" active={showDoc} onPress={() => setAsDoc(true)} style={{ paddingVertical: 3, paddingHorizontal: 10 }} textStyle={{ fontSize: 12 }} />
+              <Chip theme={theme} label="Diff" active={!showDoc} onPress={() => setAsDoc(false)} style={{ paddingVertical: 3, paddingHorizontal: 10 }} textStyle={{ fontSize: 12 }} />
+            </View>
+          ) : null}
+          {showDoc ? (
+            <View style={{ padding: 12 }}>
+              <Markdown
+                text={docText!}
+                theme={theme}
+                size={14}
+                empty="Empty file."
+                after={(block, next) => {
+                  const here = comments.filter((comment) => comment.line !== null && comment.line >= block.line && (!next || comment.line < next.line));
+                  return here.length ? <View style={{ gap: 8 }}>{here.map((comment) => card(comment, "inline"))}</View> : null;
+                }}
+              />
+            </View>
+          ) : !file.patch ? (
             <Text style={{ color: theme.colors.foregroundMuted, padding: 12, fontSize: 13 }}>No diff to show (binary, or too large for GitHub's API).</Text>
           ) : !diffShown ? (
             <Pressable onPress={() => setShowBig(true)} style={{ padding: 12 }}>
@@ -116,7 +178,7 @@ export function FileDiff({ file, comments, theme, compact, open, onToggle, actio
                   const here = Boolean(target && target.line !== null && target.line === number && target.side === side);
                   return (
                     <View key={lineIndex}>
-                      <Line line={line} theme={theme} compact={compact} active={here} onPress={actions.editable && number ? () => setTarget(here ? null : { line: number, side, text: line.text }) : undefined} />
+                      <Line line={line} tokens={highlighted[hunkIndex]?.[lineIndex]} theme={theme} compact={compact} active={here} onPress={actions.editable && number ? () => setTarget(here ? null : { line: number, side, text: line.text }) : undefined} />
                       {comments
                         .filter((comment) => on(line, comment))
                         .map((comment) => (
@@ -138,7 +200,9 @@ export function FileDiff({ file, comments, theme, compact, open, onToggle, actio
   );
 }
 
-function Line({ line, theme, compact, onPress, active }: { line: DiffLine; theme: PluginTheme; compact: boolean; onPress?: () => void; active: boolean }) {
+function Line({ line, tokens, theme, compact, onPress, active }: { line: DiffLine; tokens?: Token[]; theme: PluginTheme; compact: boolean; onPress?: () => void; active: boolean }) {
+  const color = (kind: Token["kind"]) =>
+    kind === "keyword" ? theme.colors.accent : kind === "string" ? theme.colors.statusWarning : kind === "comment" ? theme.colors.foregroundMuted : kind === "number" ? theme.colors.statusDanger : undefined;
   const bg = active ? tint(theme.colors.accent, 0.2) : line.kind === "add" ? tint(theme.colors.statusSuccess, 0.14) : line.kind === "del" ? tint(theme.colors.statusDanger, 0.14) : undefined;
   const sign = line.kind === "add" ? "+" : line.kind === "del" ? "−" : " ";
   const number = { fontFamily: MONO, fontSize: 11, color: theme.colors.foregroundMuted, textAlign: "right" as const, width: 34, paddingRight: 6 };
@@ -147,7 +211,17 @@ function Line({ line, theme, compact, onPress, active }: { line: DiffLine; theme
       {compact ? null : <Text style={number}>{line.old ?? ""}</Text>}
       <Text style={number}>{line.kind === "del" ? line.old : line.new}</Text>
       <Text style={{ fontFamily: MONO, fontSize: 12, color: theme.colors.foregroundMuted, width: 12 }}>{sign}</Text>
-      <Text style={[{ fontFamily: MONO, fontSize: 12, lineHeight: 18, color: theme.colors.foreground, flex: 1, minWidth: 0, paddingRight: 8 }, BREAK]}>{line.text || " "}</Text>
+      <Text style={[{ fontFamily: MONO, fontSize: 12, lineHeight: 18, color: theme.colors.foreground, flex: 1, minWidth: 0, paddingRight: 8 }, BREAK]}>
+        {line.text && tokens
+          ? tokens.map((token, index) =>
+              token.kind === "plain" ? token.text : (
+                <Text key={index} style={{ color: color(token.kind), fontStyle: token.kind === "comment" ? "italic" : "normal" }}>
+                  {token.text}
+                </Text>
+              ),
+            )
+          : line.text || " "}
+      </Text>
     </Pressable>
   );
 }

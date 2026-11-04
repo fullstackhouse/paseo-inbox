@@ -58,8 +58,18 @@ export const ReviewDraftSchema = ReviewInputSchema.extend({
   postedAt: z.string().optional(),
   postedUrl: z.string().optional(),
   postedVerdict: VerdictSchema.optional(),
+  /** Files the human marked viewed, with a fingerprint of the patch they saw: a changed patch unticks. */
+  viewed: z.record(z.string(), z.string()).default({}),
 });
 export type ReviewDraft = z.infer<typeof ReviewDraftSchema>;
+
+/** A short stable fingerprint of a file's patch (FNV-1a). */
+export function patchPrint(patch: string | undefined): string {
+  let hash = 0x811c9dc5;
+  for (const char of patch ?? "") hash = Math.imul(hash ^ char.charCodeAt(0), 0x01000193) >>> 0;
+  return hash.toString(36);
+}
+export const isViewed = (draft: Pick<ReviewDraft, "viewed"> | null, file: { path: string; patch?: string }) => draft?.viewed[file.path] === patchPrint(file.patch);
 
 export const touchedByHuman = (comment: StoredComment) => comment.author === "human" || comment.status !== "draft";
 
@@ -71,6 +81,7 @@ export function toDraft(input: ReviewInput, run: { id: string; itemKey: string; 
     version: run.version,
     createdAt: now,
     comments: input.comments.map((comment, index) => ({ ...comment, id: `c${index + 1}`, status: "draft" as const, author: "ai" as const })),
+    viewed: {},
   };
 }
 
@@ -86,7 +97,7 @@ export function replaceDraft(previous: ReviewDraft | null, input: ReviewInput, r
   if (!previous) return next;
   const kept = previous.comments.filter(touchedByHuman);
   let counter = highestId(previous.comments);
-  return { ...next, verdictOverride: previous.verdictOverride, comments: [...kept, ...next.comments.map((comment) => ({ ...comment, id: `c${++counter}` }))] };
+  return { ...next, verdictOverride: previous.verdictOverride, viewed: previous.viewed, comments: [...kept, ...next.comments.map((comment) => ({ ...comment, id: `c${++counter}` }))] };
 }
 
 // ---------- Revisions (the reviewer answering the human) ----------
@@ -395,6 +406,9 @@ export const addReviewComment = defineRpc({
 });
 export const deleteReviewComment = defineRpc({ name: "inbox.review_comment_delete", input: z.object({ runId: z.string(), commentId: z.string() }), output: ReviewDraftSchema });
 export const setReviewVerdict = defineRpc({ name: "inbox.review_verdict", input: z.object({ runId: z.string(), verdict: VerdictSchema.nullable() }), output: ReviewDraftSchema });
+export const setFileViewed = defineRpc({ name: "inbox.review_viewed", input: z.object({ runId: z.string(), path: z.string(), patch: z.string().optional(), viewed: z.boolean() }), output: ReviewDraftSchema });
+/** Opens an http(s) link in the system browser on the daemon's machine (the desktop app's own window isn't signed in). */
+export const openExternal = defineRpc({ name: "inbox.open_url", input: z.object({ url: z.string().regex(/^https?:\/\//) }), output: ok });
 export const postReview = defineRpc({ name: "inbox.review_post", input: z.object({ runId: z.string() }), output: z.object({ url: z.string(), inline: z.number(), folded: z.number() }) });
 /** Sends a message to the run's reviewer agent (with what it's about quoted) so the human can then open it. */
 export const discussReview = defineRpc({ name: "inbox.review_discuss", input: z.object({ runId: z.string(), message: z.string().min(1) }), output: ok });

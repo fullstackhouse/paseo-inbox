@@ -1,7 +1,7 @@
 import type { PluginScreenProps } from "@getpaseo/plugin/client";
 import { useRpc } from "@getpaseo/plugin/client";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, Linking, Pressable, ScrollView, Text, View } from "react-native";
+import { ActivityIndicator, Pressable, ScrollView, Text, View } from "react-native";
 import { runNow, skipRun, type Run } from "../shared/inbox";
 import {
   addReviewComment,
@@ -10,9 +10,11 @@ import {
   effectiveVerdict,
   getPrDetails,
   getReview,
+  isViewed,
   placement,
   postReview,
   REVISE_TOOL,
+  setFileViewed,
   setReviewVerdict,
   updateReviewComment,
   VerdictSchema,
@@ -26,6 +28,7 @@ import {
 import { CommentCard } from "./CommentCard";
 import { FileDiff, type DiffActions } from "./FileDiff";
 import { Markdown } from "./Markdown";
+import { useOpenUrl } from "./openUrl";
 import { ago, Chip, MONO, Pill, verdictColor } from "./ui";
 import { useInbox } from "./useInbox";
 
@@ -63,9 +66,12 @@ export function ReviewScreen({ theme, layout, navigation, params }: PluginScreen
   const discuss = useRpc(discussReview);
   const redraft = useRpc(runNow);
   const dismiss = useRpc(skipRun);
+  const markViewed = useRpc(setFileViewed);
+  const openUrl = useOpenUrl();
 
   const [draft, setDraft] = useState<ReviewDraft | null>(null);
   const [details, setDetails] = useState<PrDetails | null>(null);
+  const [detailsFor, setDetailsFor] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>("summary");
@@ -73,6 +79,10 @@ export function ReviewScreen({ theme, layout, navigation, params }: PluginScreen
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const scroll = useRef<ScrollView>(null);
+  // Jump-to-file: where the content and each file card sit, and which file to scroll to once laid out.
+  const contentY = useRef(0);
+  const fileY = useRef(new Map<string, number>());
+  const [scrollTo, setScrollTo] = useState<string | null>(null);
 
   // The prev/next set is fixed when the screen opens, so posting or dismissing doesn't reshuffle it.
   const snapshot = useRef<string[] | null>(null);
@@ -113,7 +123,11 @@ export function ReviewScreen({ theme, layout, navigation, params }: PluginScreen
     let live = true;
     setDetails(null);
     void fetchDetails({ itemKey })
-      .then((value) => live && setDetails(value))
+      .then((value) => {
+        if (!live) return;
+        setDetails(value);
+        setDetailsFor(itemKey);
+      })
       .catch((caught) => live && fail(caught));
     return () => {
       live = false;
@@ -121,6 +135,14 @@ export function ReviewScreen({ theme, layout, navigation, params }: PluginScreen
   }, [fetchDetails, itemKey]);
 
   const files = details?.files ?? [];
+  // Like Cerber and GitHub, diffs (with their comments) start open; big uncommented files fold
+  // themselves, and files already marked viewed start closed.
+  const opened = useRef<string | null>(null);
+  useEffect(() => {
+    if (!details || detailsFor !== itemKey || opened.current === runId) return;
+    opened.current = runId;
+    setOpenFiles(new Set(details.files.filter((file) => !isViewed(draft, file)).map((file) => file.path)));
+  }, [details, detailsFor, itemKey, draft, runId]);
   const chapters = useMemo(() => (draft ? walkthrough(draft, files) : []), [draft, files]);
   const commentsByFile = useMemo(() => {
     const map = new Map<string, ReviewDraft["comments"]>();
@@ -251,10 +273,47 @@ export function ReviewScreen({ theme, layout, navigation, params }: PluginScreen
     { id: "comments", label: `Comments ${live.length}` },
   ];
 
-  const fileDiff = (path: string) => {
+  const viewedCount = files.filter((file) => isViewed(draft, file)).length;
+  const fileDiff = (path: string, track = false) => {
     const file = files.find((candidate) => candidate.path === path);
     return file ? (
-      <FileDiff key={path} file={file} comments={commentsByFile.get(path) ?? []} theme={theme} compact={layout.compact} open={openFiles.has(path)} onToggle={() => toggleFile(path)} actions={actions} />
+      <View
+        key={path}
+        onLayout={
+          track
+            ? (event) => {
+                fileY.current.set(path, event.nativeEvent.layout.y);
+                if (scrollTo === path) {
+                  scroll.current?.scrollTo({ y: Math.max(0, contentY.current + event.nativeEvent.layout.y - 64), animated: true });
+                  setScrollTo(null);
+                }
+              }
+            : undefined
+        }
+      >
+        <FileDiff
+          file={file}
+          comments={commentsByFile.get(path) ?? []}
+          theme={theme}
+          compact={layout.compact}
+          open={openFiles.has(path)}
+          onToggle={() => toggleFile(path)}
+          actions={actions}
+          viewed={isViewed(draft, file)}
+          onViewed={
+            draft && !draft.postedUrl
+              ? (value) =>
+                  void markViewed({ runId, path, patch: file.patch, viewed: value })
+                    .then((next) => {
+                      setDraft(next);
+                      // Ticking a file folds it away, like GitHub's "Viewed".
+                      if (value) toggleFile(path, false);
+                    })
+                    .catch(fail)
+              : undefined
+          }
+        />
+      </View>
     ) : (
       <Text key={path} style={muted}>
         {path}
@@ -301,7 +360,7 @@ export function ReviewScreen({ theme, layout, navigation, params }: PluginScreen
             {stale ? <Pill theme={theme} color={theme.colors.statusWarning}>new commits since this draft</Pill> : null}
             {draft?.postedUrl ? <Pill theme={theme} color={theme.colors.statusSuccess}>posted</Pill> : null}
             <View style={{ flex: 1 }} />
-            <Chip theme={theme} label="GitHub ↗" onPress={() => void Linking.openURL(pr.url)} />
+            <Chip theme={theme} label="GitHub ↗" onPress={() => openUrl(pr.url)} />
             {run.agentId && navigation ? <Chip theme={theme} label="Reviewer chat" onPress={() => navigation.openAgent({ agentId: run.agentId! })} /> : null}
           </View>
           {stale && run.state !== "running" ? (
@@ -324,7 +383,7 @@ export function ReviewScreen({ theme, layout, navigation, params }: PluginScreen
         </View>
 
         {/* Content */}
-        <View style={{ paddingHorizontal: pad, paddingTop: 14, gap: 12, width: "100%", maxWidth, alignSelf: "center" }}>
+        <View onLayout={(event) => (contentY.current = event.nativeEvent.layout.y)} style={{ paddingHorizontal: pad, paddingTop: 14, gap: 12, width: "100%", maxWidth, alignSelf: "center" }}>
           {!draft && tab !== "description" && tab !== "files" ? <Text style={muted}>No review draft for this run yet.</Text> : null}
 
           {tab === "summary" && draft ? (
@@ -342,14 +401,19 @@ export function ReviewScreen({ theme, layout, navigation, params }: PluginScreen
             </>
           ) : null}
 
-          {tab === "walkthrough" && draft
+          {tab === "walkthrough" && draft && !details ? <ActivityIndicator color={theme.colors.foregroundMuted} /> : null}
+          {tab === "walkthrough" && draft && details
             ? chapters.map((chapter, index) => (
                 <View key={chapter.title + index} style={{ gap: 8, paddingBottom: 8 }}>
                   <Text style={{ color: theme.colors.foreground, fontSize: 16, fontWeight: "700" }}>
                     {chapter.other ? chapter.title : `${index + 1}. ${chapter.title}`}
+                    <Text style={{ ...muted, fontWeight: "400" }}>
+                      {"  "}
+                      {chapter.files.filter((path) => isViewed(draft, { path, patch: files.find((file) => file.path === path)?.patch })).length}/{chapter.files.length} viewed
+                    </Text>
                   </Text>
                   {chapter.body ? <Markdown text={chapter.body} theme={theme} size={14} /> : null}
-                  {chapter.files.map(fileDiff)}
+                  {chapter.files.map((path) => fileDiff(path))}
                 </View>
               ))
             : null}
@@ -361,8 +425,12 @@ export function ReviewScreen({ theme, layout, navigation, params }: PluginScreen
                   <Chip theme={theme} label="Expand all" onPress={() => setOpenFiles(new Set(files.map((file) => file.path)))} />
                   <Chip theme={theme} label="Collapse all" onPress={() => setOpenFiles(new Set())} />
                   {live.length ? <Chip theme={theme} label="Only commented" onPress={() => setOpenFiles(new Set(live.map((comment) => comment.path)))} /> : null}
+                  <Chip theme={theme} label="Not viewed" onPress={() => setOpenFiles(new Set(files.filter((file) => !isViewed(draft, file)).map((file) => file.path)))} />
+                  <Text style={{ ...muted, alignSelf: "center" }}>
+                    {viewedCount}/{files.length} viewed
+                  </Text>
                 </View>
-                {files.map((file) => fileDiff(file.path))}
+                {files.map((file) => fileDiff(file.path, true))}
               </>
             ) : (
               <ActivityIndicator color={theme.colors.foregroundMuted} />
@@ -397,6 +465,7 @@ export function ReviewScreen({ theme, layout, navigation, params }: PluginScreen
                   onOpenFile={() => {
                     toggleFile(comment.path, true);
                     setTab("files");
+                    setScrollTo(comment.path);
                   }}
                 />
               ))
@@ -454,7 +523,7 @@ export function ReviewScreen({ theme, layout, navigation, params }: PluginScreen
         </View>
       ) : draft?.postedUrl ? (
         <View style={{ borderTopWidth: 1, borderTopColor: theme.colors.border, padding: 12, flexDirection: "row", gap: 10, justifyContent: "center", backgroundColor: theme.colors.surface1 }}>
-          <Chip theme={theme} label={`Posted as ${draft.postedVerdict ?? draft.verdict} ↗`} onPress={() => void Linking.openURL(draft.postedUrl!)} />
+          <Chip theme={theme} label={`Posted as ${draft.postedVerdict ?? draft.verdict} ↗`} onPress={() => openUrl(draft.postedUrl!)} />
           {next ? <Chip theme={theme} active label="Next review ›" onPress={() => setRunId(next)} /> : null}
         </View>
       ) : null}

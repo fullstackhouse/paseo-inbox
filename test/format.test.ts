@@ -47,8 +47,8 @@ describe("markdown", () => {
   it("parses headings, lists, code, quotes and paragraphs; drops HTML comments", () => {
     const blocks = parseMarkdown(["## Problem", "<!-- hidden -->", "The basket", "loses items.", "", "- one", "- [x] two", "  wrapped", "1. first", "```ts", "const a = 1;", "```", "> quoted", "---"].join("\n"));
     expect(blocks.map((block) => block.kind)).toEqual(["heading", "paragraph", "list", "list", "code", "quote", "rule"]);
-    expect(blocks[1]).toEqual({ kind: "paragraph", inlines: [{ kind: "text", text: "The basket loses items." }] });
+    expect(blocks[1]).toEqual({ kind: "paragraph", inlines: [{ kind: "text", text: "The basket loses items." }], line: 3 });
     expect(blocks[2]).toMatchObject({ ordered: false, items: [[{ text: "one" }], [{ text: "☑ two" }, { text: " " }, { text: "wrapped" }]] });
-    expect(blocks[4]).toEqual({ kind: "code", text: "const a = 1;" });
+    expect(blocks[4]).toEqual({ kind: "code", text: "const a = 1;", line: 10 });
   });
 });
