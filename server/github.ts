@@ -110,6 +110,7 @@ export class GithubSource {
       author: hit.author?.login ?? "",
       additions: details.additions ?? 0,
       deletions: details.deletions ?? 0,
+      updatedAt: hit.updatedAt,
     };
     this.cache.set(hit.url, { updatedAt: hit.updatedAt, pr });
     return pr;
@@ -201,6 +202,11 @@ export class PrDetailsCache {
     };
   }
 
+  /** The PR's files at an earlier head, if this process fetched them while the PR was there. */
+  cachedFiles(repo: string, number: number, sha: string): PrDetails["files"] | null {
+    return this.cache.get(`${repo}#${number}@${sha}`) ?? null;
+  }
+
   private async files(repo: string, number: number, key: string): Promise<PrDetails["files"]> {
     const hit = this.cache.get(key);
     if (hit) return hit;
@@ -209,7 +215,7 @@ export class PrDetailsCache {
       .array(z.array(FileSchema))
       .parse(JSON.parse(pages))
       .flat()
-      .map((file) => ({ path: file.filename, previousPath: file.previous_filename ?? undefined, status: file.status, additions: file.additions, deletions: file.deletions, patch: file.patch ?? undefined }));
+      .map(toPrFile);
     this.cache.set(key, files);
     return files;
   }
@@ -231,6 +237,99 @@ export class PrDetailsCache {
         inReplyTo: comment.in_reply_to_id ?? null,
       }));
   }
+}
+
+const toPrFile = (file: z.infer<typeof FileSchema>): PrDetails["files"][number] => ({
+  path: file.filename,
+  previousPath: file.previous_filename ?? undefined,
+  status: file.status,
+  additions: file.additions,
+  deletions: file.deletions,
+  patch: file.patch ?? undefined,
+});
+
+const CompareSchema = z.object({
+  status: z.string(),
+  behind_by: z.number().default(0),
+  commits: z.array(z.object({ sha: z.string(), commit: z.object({ message: z.string() }) })).default([]),
+  files: z.array(FileSchema).default([]),
+});
+
+/** GitHub can't diff these two commits: one is gone (force-pushed away) or they share no history. */
+const UNREACHABLE = /HTTP 404|HTTP 422|Not Found|No common ancestor/i;
+
+/**
+ * `base...head` on GitHub: status, commits and files with patches. Null when GitHub can't reach the base
+ * (a force-push dropped it); other failures throw.
+ */
+export async function compareCommits(repo: string, base: string, head: string, run: Gh = gh): Promise<import("../shared/rereview").Compare | null> {
+  let out: string;
+  try {
+    out = await run(["api", `repos/${repo}/compare/${base}...${head}`]);
+  } catch (error) {
+    const text = `${error instanceof Error ? error.message : String(error)} ${(error as { stderr?: string }).stderr ?? ""}`;
+    if (UNREACHABLE.test(text)) return null;
+    throw error;
+  }
+  const parsed = CompareSchema.parse(JSON.parse(out));
+  return {
+    status: parsed.status,
+    behindBy: parsed.behind_by,
+    commits: parsed.commits.map((commit) => ({ sha: commit.sha, message: commit.commit.message })),
+    files: parsed.files.map(toPrFile),
+  };
+}
+
+const ReviewSchema = z.object({
+  user: z.object({ login: z.string() }).nullish(),
+  state: z.string(),
+  commit_id: z.string().nullish(),
+  submitted_at: z.string().nullish(),
+  html_url: z.string(),
+});
+
+/** The latest review `me` submitted on the PR (not a pending one), with the commit it was on. */
+export async function latestReviewBy(repo: string, number: number, me: string, run: Gh = gh): Promise<import("../shared/rereview").MyReview | null> {
+  const pages = await run(["api", "--paginate", "--slurp", `repos/${repo}/pulls/${number}/reviews?per_page=100`]);
+  const mine = z
+    .array(z.array(ReviewSchema))
+    .parse(JSON.parse(pages))
+    .flat()
+    .filter((review) => review.user?.login.toLowerCase() === me.toLowerCase() && review.state !== "PENDING" && review.commit_id && review.submitted_at)
+    .sort((a, b) => Date.parse(b.submitted_at!) - Date.parse(a.submitted_at!))[0];
+  return mine ? { commit: mine.commit_id!, at: mine.submitted_at!, url: mine.html_url } : null;
+}
+
+const REQUESTS_QUERY = `query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) { pullRequest(number: $number) {
+    timelineItems(last: 100, itemTypes: [REVIEW_REQUESTED_EVENT]) { nodes { ... on ReviewRequestedEvent {
+      createdAt actor { login } requestedReviewer { __typename ... on User { login } }
+    } } }
+  } }
+}`;
+
+const RequestsSchema = z.object({
+  data: z.object({
+    repository: z.object({
+      pullRequest: z.object({
+        timelineItems: z.object({
+          nodes: z.array(z.object({ createdAt: z.string(), actor: z.object({ login: z.string() }).nullish(), requestedReviewer: z.object({ __typename: z.string(), login: z.string().optional() }).nullish() }).partial()),
+        }),
+      }),
+    }),
+  }),
+});
+
+/**
+ * The PR's review requests, newest 100, in one call. The re-request button looks exactly like the first
+ * request everywhere else on GitHub, so the timeline is the only place that says when it was made.
+ */
+export async function reviewRequests(repo: string, number: number, run: Gh = gh): Promise<import("../shared/rereview").ReviewRequest[]> {
+  const [owner, name] = repo.split("/");
+  const out = await run(["api", "graphql", "-f", `query=${REQUESTS_QUERY}`, "-f", `owner=${owner}`, "-f", `name=${name}`, "-F", `number=${number}`]);
+  return RequestsSchema.parse(JSON.parse(out)).data.repository.pullRequest.timelineItems.nodes.flatMap((node) =>
+    node.createdAt ? [{ at: node.createdAt, reviewer: node.requestedReviewer?.__typename === "User" ? (node.requestedReviewer.login ?? null) : null, by: node.actor?.login ?? "" }] : [],
+  );
 }
 
 /** `https://github.com/o/r/pull/12` or `o/r#12` → repo and number. */

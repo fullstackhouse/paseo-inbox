@@ -4,7 +4,7 @@ import { Platform, Pressable, Text, View } from "react-native";
 import { anchors, parsePatch, type DiffLine } from "../shared/diff";
 import { highlightLine, languageFor, type Token } from "../shared/highlight";
 import { addedText, isMarkdownPath } from "../shared/markdown";
-import type { PrFile, PrThread, Severity, StoredComment } from "../shared/review";
+import type { Placement, PrFile, PrThread, Severity, StoredComment } from "../shared/review";
 import { CommentCard, Composer, type CommentChange } from "./CommentCard";
 import { Markdown } from "./Markdown";
 import { Chip, MONO, tint } from "./ui";
@@ -76,7 +76,8 @@ export function FileDiff({
   const live = comments.filter((comment) => comment.status !== "dropped").length;
   const dir = file.path.includes("/") ? file.path.slice(0, file.path.lastIndexOf("/") + 1) : "";
   const name = file.path.slice(dir.length);
-  const on = (line: DiffLine, comment: StoredComment) => comment.line !== null && anchors(line, { line: comment.line, side: comment.side });
+  // A drifted comment keeps its old line number, which may now name an unrelated line: never place it there.
+  const on = (line: DiffLine, comment: StoredComment) => comment.line !== null && !comment.drifted && anchors(line, { line: comment.line, side: comment.side });
 
   const anchored = new Set(hunks.flatMap((hunk) => hunk.lines.flatMap((line) => comments.filter((comment) => on(line, comment)).map((comment) => comment.id))));
   const fileLevel = comments.filter((comment) => comment.line === null);
@@ -96,7 +97,7 @@ export function FileDiff({
       <Markdown text={thread.body} theme={theme} size={13} />
     </View>
   );
-  const card = (comment: StoredComment, where: "inline" | "file" | "outside") => (
+  const card = (comment: StoredComment, where: Placement) => (
     <CommentCard
       key={comment.id}
       raisedBy={comment.raised !== null ? threads.find((thread) => thread.id === comment.raised) : undefined}
@@ -171,7 +172,7 @@ export function FileDiff({
                 size={14}
                 empty="Empty file."
                 after={(block, next) => {
-                  const here = comments.filter((comment) => comment.line !== null && comment.line >= block.line && (!next || comment.line < next.line));
+                  const here = comments.filter((comment) => comment.line !== null && !comment.drifted && comment.line >= block.line && (!next || comment.line < next.line));
                   return here.length ? <View style={{ gap: 8 }}>{here.map((comment) => card(comment, "inline"))}</View> : null;
                 }}
               />
@@ -210,7 +211,7 @@ export function FileDiff({
               </View>
             ))
           )}
-          {outside.length ? <View style={{ padding: 8, gap: 8, backgroundColor: theme.colors.surface0 }}>{outside.map((comment) => card(comment, "outside"))}</View> : null}
+          {outside.length ? <View style={{ padding: 8, gap: 8, backgroundColor: theme.colors.surface0 }}>{outside.map((comment) => card(comment, comment.drifted ? "drifted" : "outside"))}</View> : null}
           {otherThreads.length ? (
             <View style={{ padding: 8, gap: 6, backgroundColor: theme.colors.surface0 }}>
               <Text style={{ color: theme.colors.foregroundMuted, fontSize: 12 }}>Other reviewers, on lines outside this diff:</Text>

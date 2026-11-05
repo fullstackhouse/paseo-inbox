@@ -4,7 +4,9 @@ import { installBridge } from "./server/bridge";
 import { openInBrowser } from "./server/open";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { ghWithInput, GithubMembership, GithubSource, postPullReview, PrDetailsCache, whoami } from "./server/github";
+import { compareCommits, ghWithInput, GithubMembership, GithubSource, latestReviewBy, postPullReview, PrDetailsCache, reviewRequests, whoami } from "./server/github";
+import { filesAt, reanchorRun, sinceRun } from "./server/rereview";
+import { reanchorReview, reviewSince } from "./shared/rereview";
 import { guardEnv, installShims, RUN_ENV } from "./server/guard";
 import { Inbox, type StartRequest } from "./server/inbox";
 import { listen } from "./server/listener";
@@ -76,6 +78,10 @@ export default function contribute(server: PluginServerContext) {
   const membership = new GithubMembership();
   const details = (repo: string, number: number) => prDetails.get(repo, number);
   const ghJson = (args: string[], body: unknown) => ghWithInput(args, JSON.stringify(body));
+  // The signed-in login, looked up once (a failure isn't remembered).
+  let login: Promise<string> | null = null;
+  const me = () => (login ??= whoami().catch((error) => ((login = null), Promise.reject(error))));
+  const compare = (repo: string, base: string, head: string) => compareCommits(repo, base, head);
   // An empty gh config for untrusted runs: gh there has no account to speak for.
   const emptyGh = join(dir, "untrusted-gh");
   mkdirSync(emptyGh, { recursive: true });
@@ -130,6 +136,12 @@ export default function contribute(server: PluginServerContext) {
     search: (query) => github.search(query),
     start,
     ready: () => paseo !== null,
+    requests: (pr) => reviewRequests(pr.repo, pr.number),
+    me,
+    draftOf: (runId) => {
+      const draft = reviews.get(runId);
+      return draft ? { posted: Boolean(draft.postedUrl) } : null;
+    },
     trust: (pr, config) => decideTrust(pr.author, config.trust, membership),
     announce: async (run, headline) => {
       if (!paseo || !run.agentId) return;
@@ -301,7 +313,15 @@ export default function contribute(server: PluginServerContext) {
   });
   server.handle(handoffReview, ({ runId, to, note, sendDraft }, { paseo: api }) => {
     capture(api);
-    return handoffDraft(inbox, reviews, runId, { to, note, sendDraft }, { details, ghJson, me: () => whoami(), post: (repo, number, payload) => postPullReview(repo, number, payload) });
+    return handoffDraft(inbox, reviews, runId, { to, note, sendDraft }, { details, ghJson, me, post: (repo, number, payload) => postPullReview(repo, number, payload) });
+  });
+  server.handle(reanchorReview, ({ runId }, { paseo: api }) => {
+    capture(api);
+    return reanchorRun(inbox, reviews, runId, { details, filesAt: filesAt((repo, number, sha) => prDetails.cachedFiles(repo, number, sha), compare) });
+  });
+  server.handle(reviewSince, ({ runId }, { paseo: api }) => {
+    capture(api);
+    return sinceRun(inbox, reviews, runId, { details, me, latestReview: (repo, number, login) => latestReviewBy(repo, number, login), compare });
   });
   server.handle(previewReview, ({ runId }, { paseo: api }) => {
     capture(api);
@@ -319,15 +339,15 @@ export default function contribute(server: PluginServerContext) {
     capture(api);
     const item = inbox.item(itemKey);
     if (!item) throw new Error(`Unknown PR ${itemKey}`);
-    const [me, live, collaborators] = await Promise.all([
-      whoami().catch(() => ""),
+    const [self, live, collaborators] = await Promise.all([
+      me().catch(() => ""),
       details(item.pr.repo, item.pr.number).catch(() => null),
       github.collaborators(item.pr.repo).catch(() => [] as string[]),
     ]);
     const people = [...new Set([...(live?.requestedReviewers ?? []), ...(live?.threads.map((thread) => thread.author) ?? []), ...collaborators])].filter(
-      (login) => login && login.toLowerCase() !== me.toLowerCase() && login.toLowerCase() !== item.pr.author.toLowerCase() && !/\[bot\]$/.test(login),
+      (login) => login && login.toLowerCase() !== self.toLowerCase() && login.toLowerCase() !== item.pr.author.toLowerCase() && !/\[bot\]$/.test(login),
     );
-    return { me, people };
+    return { me: self, people };
   });
   server.handle(addPr, async ({ ref }, { paseo: api }) => {
     capture(api);

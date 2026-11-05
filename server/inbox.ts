@@ -1,4 +1,8 @@
-import { DISMISSED, modeFor, plan, renderPrompt, providerFor, requeue, setRun, startable, type Config, type InboxView, type Pr, type Run, type State } from "../shared/inbox";
+import { DISMISSED, latestRound, modeFor, moveRun, plan, renderPrompt, providerFor, reopen, reopenable, requeue, runId, setRun, startable, type Config, type InboxView, type Pr, type Run, type State } from "../shared/inbox";
+import { askedAgain, type ReviewRequest } from "../shared/rereview";
+
+/** At most this many "asked again?" timeline reads per poll. */
+const REOPEN_CHECKS = 10;
 
 export interface StartRequest {
   run: Run;
@@ -23,6 +27,12 @@ export interface InboxDeps {
   announce?: (run: Run, headline: string) => Promise<void>;
   /** Archives an inbox agent's workspace (and its worktree) once the human is done with it. */
   archive?: (workspaceId: string) => Promise<void>;
+  /** The PR's review requests (GitHub timeline), for reopening a settled run when the human is asked again. */
+  requests?: (pr: Pr) => Promise<ReviewRequest[]>;
+  /** The signed-in GitHub login. */
+  me?: () => Promise<string>;
+  /** Whether a run has a review draft, and whether it was posted. */
+  draftOf?: (runId: string) => { posted: boolean } | null;
   /** Moves a run's (background) workspace into the sidebar, once the human works in it. */
   reveal?: (workspaceId: string) => Promise<void>;
   /** False until the plugin has a Paseo session to create agents with; queued runs wait. */
@@ -36,6 +46,8 @@ export class Inbox {
   private lastPollAt: string | null = null;
   private errors: string[] = [];
   private polling: Promise<void> | null = null;
+  /** Per settled run: the PR's `updatedAt` when it was last checked for a new request. A request bumps it. */
+  private readonly checked = new Map<string, string>();
   private readonly now: () => string;
 
   constructor(private readonly deps: InboxDeps) {
@@ -91,9 +103,36 @@ export class Inbox {
       }),
     );
     this.commit(plan({ config, results, state: this.state, now: this.now() }));
+    await this.reopenAsked(config, results);
     this.lastPollAt = this.now();
     this.errors = errors;
     await this.dispatch(config);
+  }
+
+  /**
+   * SPEC-048 open question 2: a settled run (posted, dismissed, handed off) reopens when GitHub's timeline
+   * shows the human was asked to review again after it settled. Only PRs that changed since the last
+   * check cost a call, and a failed read changes nothing.
+   */
+  private async reopenAsked(config: Config, results: Record<string, Pr[]>): Promise<void> {
+    if (!this.deps.requests || !this.deps.me) return;
+    const due = reopenable(this.state, config, results).filter(({ run, pr }) => this.checked.get(run.id) !== pr.updatedAt || !pr.updatedAt);
+    if (!due.length) return;
+    const me = await this.deps.me().catch(() => "");
+    if (!me) return;
+    for (const { run, pr } of due.slice(0, REOPEN_CHECKS)) {
+      // Spent before the call, so an outage doesn't turn into a retry on every poll.
+      this.checked.set(run.id, pr.updatedAt);
+      try {
+        const ask = askedAgain(await this.deps.requests(pr), me, run.updatedAt);
+        const current = this.run(run.id);
+        if (!ask || current?.state !== "done" || current.updatedAt !== run.updatedAt) continue;
+        console.log(`inbox: ${run.itemKey} reopened, review requested again by @${ask.by} at ${ask.at}`);
+        this.commit(reopen(this.state, config, current, ask, this.deps.draftOf?.(run.id) ?? null, this.now()));
+      } catch (error) {
+        console.error("inbox: review-request check failed", run.itemKey, message(error));
+      }
+    }
   }
 
   private async dispatch(config: Config): Promise<void> {
@@ -162,8 +201,19 @@ export class Inbox {
   async runNow(itemKey: string, rule: string): Promise<void> {
     const config = this.deps.loadConfig();
     if (!config) throw new Error("No inbox.json");
-    this.commit(requeue(this.state, config, itemKey, rule, this.now()));
+    // A review already posted at this head can't be replaced: drafting again starts another round.
+    const head = this.state.items[itemKey]?.pr.headSha;
+    const round = head ? latestRound(this.state, itemKey, rule, head) : 1;
+    const posted = head ? this.deps.draftOf?.(runId(itemKey, rule, head, round))?.posted : false;
+    this.commit(requeue(this.state, config, itemKey, rule, this.now(), posted ? { round: round + 1 } : {}));
     await this.dispatch(config);
+  }
+
+  /** A draft was carried to `version` without an AI run; returns the run that holds it now. */
+  moved(fromId: string, version: string): string {
+    const { state, id } = moveRun(this.state, fromId, version, this.now());
+    this.commit(state);
+    return id;
   }
 
   /** Done with it: the run is not re-decided by later polls, and its workspace is archived. */

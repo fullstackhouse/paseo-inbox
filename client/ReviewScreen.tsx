@@ -29,6 +29,7 @@ import {
   type ReviewDraft,
   type Severity,
 } from "../shared/review";
+import { reanchorReview, reviewSince, type Since } from "../shared/rereview";
 import { CommentCard } from "./CommentCard";
 import { HandoffPanel, PreviewPane } from "./Decide";
 import { FileDiff, type DiffActions } from "./FileDiff";
@@ -39,7 +40,7 @@ import { useInbox } from "./useInbox";
 
 export const REVIEW_SCREEN = "review";
 
-type Tab = "summary" | "walkthrough" | "files" | "description" | "comments" | "preview";
+type Tab = "summary" | "walkthrough" | "since" | "files" | "description" | "comments" | "preview";
 
 /** Runs whose review draft is waiting for the human, newest first: the prev/next order. */
 export const reviewQueue = (runs: readonly Run[]) =>
@@ -76,6 +77,10 @@ export function ReviewScreen({ theme, layout, navigation, params }: PluginScreen
   const saveBody = useRpc(setReviewBody);
   const people = useRpc(prPeople);
   const handoff = useRpc(handoffReview);
+  const reanchor = useRpc(reanchorReview);
+  const fetchSince = useRpc(reviewSince);
+  const [since, setSince] = useState<Since | null>(null);
+  const [sinceOpen, setSinceOpen] = useState<Set<string>>(new Set());
   const [handingOff, setHandingOff] = useState(false);
   const openUrl = useOpenUrl();
 
@@ -89,6 +94,7 @@ export function ReviewScreen({ theme, layout, navigation, params }: PluginScreen
   const [closedChapters, setClosedChapters] = useState<Set<number>>(new Set());
   const [busy, setBusy] = useState<string | null>(null);
   const scroll = useRef<ScrollView>(null);
+  const carried = useRef<string | null>(null);
   // Jump-to-file: where the content and each file card sit, and which file to scroll to once laid out.
   const contentY = useRef(0);
   const fileY = useRef(new Map<string, number>());
@@ -106,7 +112,8 @@ export function ReviewScreen({ theme, layout, navigation, params }: PluginScreen
     if (!runId) return;
     setDraft(null);
     setError(null);
-    setNotice(null);
+    setNotice(carried.current);
+    carried.current = null;
     setTab("summary");
     setOpenFiles(new Set());
     setClosedChapters(new Set());
@@ -143,6 +150,25 @@ export function ReviewScreen({ theme, layout, navigation, params }: PluginScreen
       live = false;
     };
   }, [fetchDetails, itemKey]);
+
+  // "Changes since my last review": asked once the live head is known, again when the draft moves.
+  const liveHead = details && detailsFor === itemKey ? details.headSha : null;
+  const draftVersion = draft?.version;
+  useEffect(() => {
+    if (!runId || !liveHead) return;
+    let live = true;
+    setSince(null);
+    void fetchSince({ runId })
+      .then((value) => {
+        if (!live) return;
+        setSince(value);
+        setSinceOpen(new Set(value.kind === "changes" ? value.files.map((file) => file.path) : []));
+      })
+      .catch(() => live && setSince(null));
+    return () => {
+      live = false;
+    };
+  }, [fetchSince, runId, liveHead, draftVersion]);
 
   const files = details?.files ?? [];
   // Like Cerber and GitHub, diffs (with their comments) start open; big uncommented files fold
@@ -236,6 +262,14 @@ export function ReviewScreen({ theme, layout, navigation, params }: PluginScreen
       if (next) setRunId(next);
       else setNotice("Dismissed. Later pushes won't draft this PR again.");
     });
+  const carry = () =>
+    act("reanchor", async () => {
+      const result = await reanchor({ runId });
+      await refresh();
+      // Shown once the screen has reset for the new run id.
+      carried.current = `Comments moved to the new head: ${result.moved} moved, ${result.unchanged} unchanged${result.drifted ? `, ${result.drifted} drifted (their line changed; they go in the review body)` : ""}.`;
+      setRunId(result.runId);
+    });
   const rerun = () =>
     act("redraft", async () => {
       if (run) await redraft({ itemKey: run.itemKey, rule: run.rule });
@@ -287,6 +321,7 @@ export function ReviewScreen({ theme, layout, navigation, params }: PluginScreen
   const tabs: { id: Tab; label: string }[] = [
     { id: "summary", label: "Summary" },
     ...(chapters.length ? [{ id: "walkthrough" as const, label: `Walkthrough ${chapters.length}` }] : []),
+    ...(since && since.kind !== "none" ? [{ id: "since" as const, label: `Since ${since.base.slice(0, 7)}${since.kind === "changes" ? ` · ${since.files.length}` : ""}` }] : []),
     { id: "files", label: `Files ${details ? files.length : pr.files.length}` },
     { id: "description", label: "Description" },
     { id: "comments", label: `Comments ${live.length}` },
@@ -385,6 +420,7 @@ export function ReviewScreen({ theme, layout, navigation, params }: PluginScreen
               </Pill>
             ) : null}
             {stale ? <Pill theme={theme} color={theme.colors.statusWarning}>new commits since this draft</Pill> : null}
+            {draft?.reviewedVersion && draft.reviewedVersion !== draft.version ? <Pill theme={theme} color={theme.colors.foregroundMuted}>summary written for {draft.reviewedVersion.slice(0, 7)}</Pill> : null}
             {draft?.postedUrl ? <Pill theme={theme} color={theme.colors.statusSuccess}>posted</Pill> : null}
             {run.trusted === false ? <Pill theme={theme} color={theme.colors.statusWarning}>read-only run: author not trusted</Pill> : null}
             {details?.threads.length ? <Pill theme={theme} color={theme.colors.foregroundMuted}>{details.threads.length} comments from others</Pill> : null}
@@ -394,8 +430,11 @@ export function ReviewScreen({ theme, layout, navigation, params }: PluginScreen
           </View>
           {stale && run.state !== "running" ? (
             <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-              <Text style={{ ...muted, flex: 1 }}>The PR moved on since this was drafted ({draft?.version.slice(0, 7)} → {headSha?.slice(0, 7)}), so the comments may sit on the wrong lines.</Text>
-              <Chip theme={theme} active label={busy === "redraft" ? "Re-drafting…" : "Re-draft at the new head"} disabled={Boolean(busy)} onPress={() => void rerun()} />
+              <Text style={{ ...muted, flex: 1, minWidth: 220 }}>
+                The PR moved on since this was drafted ({draft?.version.slice(0, 7)} → {headSha?.slice(0, 7)}). Move the comments to the new head to keep your decisions (no AI run; the summary stays as written), or re-draft from scratch.
+              </Text>
+              {draft && !draft.postedUrl ? <Chip theme={theme} active label={busy === "reanchor" ? "Moving…" : "Move comments to the new head"} disabled={Boolean(busy)} onPress={() => void carry()} /> : null}
+              <Chip theme={theme} label={busy === "redraft" ? "Re-drafting…" : "Re-draft at the new head"} disabled={Boolean(busy)} onPress={() => void rerun()} />
             </View>
           ) : null}
           {notice ? <Text style={{ color: theme.colors.statusSuccess, fontSize: 13 }}>{notice}</Text> : null}
@@ -417,6 +456,11 @@ export function ReviewScreen({ theme, layout, navigation, params }: PluginScreen
 
           {tab === "summary" && draft ? (
             <>
+              {draft.reviewedVersion && draft.reviewedVersion !== draft.version ? (
+                <Text style={muted}>
+                  Written for {draft.reviewedVersion.slice(0, 7)}. The comments were moved to {draft.version.slice(0, 7)} without a new review; see what changed in Since {draft.reviewedVersion.slice(0, 7)}.
+                </Text>
+              ) : null}
               <Markdown text={draft.summary} theme={theme} />
               {draft.reasoning ? (
                 <View style={{ gap: 8, backgroundColor: theme.colors.surface1, borderRadius: 10, padding: 12 }}>
@@ -459,6 +503,28 @@ export function ReviewScreen({ theme, layout, navigation, params }: PluginScreen
                 );
               })
             : null}
+
+          {tab === "since" && since && since.kind !== "none" ? (
+            <SinceView
+              since={since}
+              theme={theme}
+              compact={layout.compact}
+              muted={muted}
+              open={sinceOpen}
+              onToggle={(path) =>
+                setSinceOpen((current) => {
+                  const nextOpen = new Set(current);
+                  if (nextOpen.has(path)) nextOpen.delete(path);
+                  else nextOpen.add(path);
+                  return nextOpen;
+                })
+              }
+              // Only a draft at the head has comments on these lines; the old side here is the old commit, not the base.
+              comments={(path) => (stale ? [] : (commentsByFile.get(path) ?? []).filter((comment) => comment.side === "RIGHT" && !comment.drifted))}
+              actions={{ ...actions, editable: false }}
+              onFiles={() => setTab("files")}
+            />
+          ) : null}
 
           {tab === "files" ? (
             details ? (
@@ -578,7 +644,7 @@ export function ReviewScreen({ theme, layout, navigation, params }: PluginScreen
             </View>
             <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
               <Text style={{ ...muted, flex: 1 }} numberOfLines={2}>
-                {stale ? "Re-draft before posting." : `${live.length} comment${live.length === 1 ? "" : "s"}${folded ? ` (${folded} in the body)` : ""}${draft.comments.length > live.length ? ` · ${draft.comments.length - live.length} dropped` : ""}`}
+                {stale ? "Move the comments or re-draft before posting." : `${live.length} comment${live.length === 1 ? "" : "s"}${folded ? ` (${folded} in the body)` : ""}${draft.comments.length > live.length ? ` · ${draft.comments.length - live.length} dropped` : ""}`}
               </Text>
               <Pressable
                 accessibilityRole="button"
@@ -599,6 +665,65 @@ export function ReviewScreen({ theme, layout, navigation, params }: PluginScreen
         </View>
       ) : null}
     </View>
+  );
+}
+
+const SINCE_FROM = { draft: "this draft's commit", reviewed: "the commit the summary was written for", posted: "your last review" } as const;
+
+/** What changed since the commit the human last reviewed: its commits, then each changed file's diff. */
+function SinceView({
+  since,
+  theme,
+  compact,
+  muted,
+  open,
+  onToggle,
+  comments,
+  actions,
+  onFiles,
+}: {
+  since: Exclude<Since, { kind: "none" }>;
+  theme: PluginScreenProps["theme"];
+  compact: boolean;
+  muted: { color: string; fontSize: number };
+  open: Set<string>;
+  onToggle: (path: string) => void;
+  comments: (path: string) => ReviewDraft["comments"];
+  actions: DiffActions;
+  onFiles: () => void;
+}) {
+  const what = `${SINCE_FROM[since.from]}${since.at ? ` (${ago(since.at)} ago)` : ""}, ${since.base.slice(0, 7)}`;
+  if (since.kind === "same") return <Text style={muted}>No new commits since {what}.</Text>;
+  if (since.kind === "rewritten")
+    return (
+      <View style={{ gap: 8, alignItems: "flex-start" }}>
+        <Text style={{ color: theme.colors.statusWarning, fontSize: 14 }}>
+          {since.why === "unreachable" ? `GitHub no longer has ${since.base.slice(0, 7)}` : `The branch no longer contains ${since.base.slice(0, 7)}`}: it was force-pushed or rebased since {SINCE_FROM[since.from]}, so there's no clean diff of what changed. Read the full diff instead.
+        </Text>
+        <Chip theme={theme} label="Open Files" onPress={onFiles} />
+      </View>
+    );
+  return (
+    <>
+      <Text style={muted}>
+        Since {what} → {since.head.slice(0, 7)}: {since.commits.length} commit{since.commits.length === 1 ? "" : "s"}, {since.files.length} file{since.files.length === 1 ? "" : "s"}
+        {since.hidden ? `, plus ${since.hidden} the PR doesn't change (merged from the base branch), left out` : ""}.
+      </Text>
+      {since.commits.length ? (
+        <View style={{ gap: 4, backgroundColor: theme.colors.surface1, borderRadius: 10, padding: 10 }}>
+          {since.commits.map((commit) => (
+            <Text key={commit.sha} style={{ color: theme.colors.foreground, fontSize: 13 }} numberOfLines={1}>
+              <Text style={{ fontFamily: MONO, color: theme.colors.foregroundMuted }}>{commit.sha.slice(0, 7)}</Text> {commit.message.split("\n")[0]}
+            </Text>
+          ))}
+        </View>
+      ) : null}
+      {since.files.length ? (
+        since.files.map((file) => <FileDiff key={file.path} file={file} comments={comments(file.path)} theme={theme} compact={compact} open={open.has(file.path)} onToggle={() => onToggle(file.path)} actions={actions} />)
+      ) : (
+        <Text style={muted}>None of the PR's files changed.</Text>
+      )}
+    </>
   );
 }
 

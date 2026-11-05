@@ -70,6 +70,8 @@ export const PrSchema = z.object({
   author: z.string().default(""),
   additions: z.number().default(0),
   deletions: z.number().default(0),
+  /** GitHub's last-activity stamp: a new review request bumps it, so it gates the "asked again" check. */
+  updatedAt: z.string().default(""),
 });
 export type Pr = z.infer<typeof PrSchema>;
 
@@ -89,6 +91,8 @@ export const RunSchema = z.object({
   trusted: z.boolean().optional(),
   reason: z.string().optional(),
   updatedAt: z.string(),
+  /** A second (third…) run at the same head, after the review was requested again. */
+  round: z.number().int().min(2).optional(),
 });
 export type Run = z.infer<typeof RunSchema>;
 
@@ -110,7 +114,7 @@ const LEAVES: ReadonlySet<RunState> = new Set(["queued", "needs-decision", "no-c
 export const DISMISSED = "dismissed";
 
 export const prKey = (repo: string, number: number) => `${repo.toLowerCase()}#${number}`;
-export const runId = (itemKey: string, rule: string, version: string) => `${itemKey}|${rule}|${version}`;
+export const runId = (itemKey: string, rule: string, version: string, round = 1) => `${itemKey}|${rule}|${version}${round > 1 ? `|r${round}` : ""}`;
 
 // ---------- Matching ----------
 
@@ -200,7 +204,7 @@ export function plan({ config, results, state, now }: PlanInput): State {
       const base = { id, itemKey: pr.key, source, rule: ruleName, version: pr.headSha, updatedAt: now };
       let next: Run | null;
       if (!rule) next = { ...base, state: "skipped", reason: reasons.join("; ") };
-      else if (earlier.some((run) => run.state === "done" && run.reason === DISMISSED)) next = null;
+      else if (dismissed(earlier)) next = null;
       else if (rule.rerun === "once" && earlier.some((run) => run.state !== "skipped" && run.state !== "no-checkout")) next = null;
       else if (rule.rerun === "manual") next = { ...base, state: "skipped", reason: "manual rule: use Run now" };
       else if (!checkouts.has(pr.repo.toLowerCase())) next = { ...base, state: "no-checkout", reason: `set checkouts["${pr.repo}"] in inbox.json` };
@@ -232,6 +236,12 @@ export function plan({ config, results, state, now }: PlanInput): State {
   return { items, runs };
 }
 
+/** The latest run that got anywhere was dismissed: a push doesn't bring it back, only being asked again does. */
+function dismissed(runs: readonly Run[]): boolean {
+  const latest = runs.filter((run) => run.state !== "skipped" && run.state !== "no-checkout").sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
+  return latest?.state === "done" && latest.reason === DISMISSED;
+}
+
 /** Queued runs to start now, oldest first, within `maxConcurrent`. */
 export function startable(state: State, maxConcurrent: number): Run[] {
   const running = state.runs.filter((run) => run.state === "running").length;
@@ -246,17 +256,91 @@ export function setRun(state: State, id: string, patch: Partial<Run>, now: strin
   return { ...state, runs: state.runs.map((run) => (run.id === id ? { ...run, ...patch, updatedAt: now } : run)) };
 }
 
-/** Back to queued, at the item's current version (Run now / Rerun). */
-export function requeue(state: State, config: Config, itemKey: string, rule: string, now: string): State {
+/** The newest round of (item, rule) at `version`: 1 when there's no run yet. */
+export function latestRound(state: State, itemKey: string, rule: string, version: string): number {
+  return Math.max(1, ...state.runs.filter((run) => run.itemKey === itemKey && run.rule === rule && run.version === version).map((run) => run.round ?? 1));
+}
+
+/**
+ * Back to queued, at the item's current version (Run now / Rerun), in the latest round there. Pass
+ * `round` to start another round instead, when the latest one's review was already posted.
+ */
+export function requeue(state: State, config: Config, itemKey: string, rule: string, now: string, options: { round?: number; reason?: string; source?: string } = {}): State {
   const item = state.items[itemKey];
   if (!item) throw new Error(`Unknown item ${itemKey}`);
   if (!config.rules.some((candidate) => candidate.name === rule)) throw new Error(`Unknown rule ${rule}`);
-  const id = runId(itemKey, rule, item.pr.headSha);
+  const round = options.round ?? latestRound(state, itemKey, rule, item.pr.headSha);
+  const id = runId(itemKey, rule, item.pr.headSha, round);
   const current = state.runs.find((run) => run.id === id);
   if (current?.state === "running") throw new Error("Already running");
-  const source = current?.source ?? config.rules.find((candidate) => candidate.name === rule)!.source;
-  const queued: Run = { id, itemKey, source, rule, version: item.pr.headSha, state: "queued", updatedAt: now };
+  const source = options.source ?? current?.source ?? config.rules.find((candidate) => candidate.name === rule)!.source;
+  const queued: Run = { id, itemKey, source, rule, version: item.pr.headSha, state: "queued", updatedAt: now, ...(round > 1 ? { round } : {}), ...(options.reason ? { reason: options.reason } : {}) };
   return { ...state, runs: [...state.runs.filter((run) => run.id !== id), queued] };
+}
+
+// ---------- Asked again (SPEC-048 open question 2) ----------
+
+/** The latest run of each (item, rule), whatever its round or version. */
+export function latestRuns(runs: readonly Run[]): Map<string, Run> {
+  const latest = new Map<string, Run>();
+  for (const run of runs) {
+    const key = `${run.itemKey}|${run.rule}`;
+    const seen = latest.get(key);
+    if (!seen || seen.updatedAt <= run.updatedAt) latest.set(key, run);
+  }
+  return latest;
+}
+
+/**
+ * Settled runs a new review request could reopen: the latest run of its (item, rule) is done (posted,
+ * dismissed, handed off, or settled on GitHub) and the PR is back in that rule's source. Manual rules
+ * only run when the human says so.
+ */
+export function reopenable(state: State, config: Config, results: Record<string, Pr[]>): { run: Run; pr: Pr }[] {
+  const out: { run: Run; pr: Pr }[] = [];
+  const latest = latestRuns(state.runs);
+  for (const rule of config.rules) {
+    if (rule.rerun === "manual") continue;
+    for (const pr of results[rule.source] ?? []) {
+      const run = latest.get(`${pr.key}|${rule.name}`);
+      if (run?.state === "done") out.push({ run, pr });
+    }
+  }
+  return out;
+}
+
+/**
+ * Reopens a settled run because the human was asked to review again. An unposted draft at the head
+ * comes back as it was (no AI run); otherwise a fresh run is queued at the head, in a new round when
+ * this head already had one. Earlier dismissals stop counting: later pushes run as usual.
+ */
+export function reopen(state: State, config: Config, run: Run, ask: { at: string; by: string }, draft: { posted: boolean } | null, now: string): State {
+  const item = state.items[run.itemKey];
+  if (!item) return state;
+  const why = `review requested again${ask.by ? ` by @${ask.by}` : ""}`;
+  const head = item.pr.headSha;
+  if (run.version === head && draft && !draft.posted) return setRun(state, run.id, { state: "needs-decision", reason: `${why}: your draft is back` }, now);
+  const atHead = state.runs.some((candidate) => candidate.itemKey === run.itemKey && candidate.rule === run.rule && candidate.version === head);
+  const round = atHead ? latestRound(state, run.itemKey, run.rule, head) + 1 : 1;
+  const next = requeue(state, config, run.itemKey, run.rule, now, { round, reason: why, source: run.source });
+  const checkout = Object.keys(config.checkouts).some((repo) => repo.toLowerCase() === item.pr.repo.toLowerCase());
+  return checkout ? next : setRun(next, runId(run.itemKey, run.rule, head, round), { state: "no-checkout", reason: `set checkouts["${item.pr.repo}"] in Settings → Inbox` }, now);
+}
+
+/**
+ * A draft carried to a new head: the old run is done, and a run at the new head takes over its agent
+ * and waits for the human. The item's head moves too, so the next poll finds the new run.
+ */
+export function moveRun(state: State, fromId: string, version: string, now: string): { state: State; id: string } {
+  const from = state.runs.find((run) => run.id === fromId);
+  if (!from) throw new Error(`Unknown run ${fromId}`);
+  const id = runId(from.itemKey, from.rule, version);
+  const moved: Run = { ...from, id, version, state: "needs-decision", reason: `review moved to ${version.slice(0, 7)} from ${from.version.slice(0, 7)}`, updatedAt: now };
+  delete moved.round;
+  const runs = state.runs.filter((run) => run.id !== id).map((run) => (run.id === fromId ? { ...run, state: "done" as const, reason: `comments moved to ${version.slice(0, 7)}`, updatedAt: now } : run));
+  const item = state.items[from.itemKey];
+  const items = item ? { ...state.items, [from.itemKey]: { ...item, pr: { ...item.pr, headSha: version } } } : state.items;
+  return { state: { items, runs: [...runs, moved] }, id };
 }
 
 // ---------- Prompt ----------
@@ -311,12 +395,7 @@ export const STATE_ORDER: RunState[] = ["needs-decision", "running", "queued", "
 
 /** Latest run per (item, rule), grouped by state in display order. */
 export function groupRuns(runs: readonly Run[]): { state: RunState; runs: Run[] }[] {
-  const latest = new Map<string, Run>();
-  for (const run of runs) {
-    const key = `${run.itemKey}|${run.rule}`;
-    const seen = latest.get(key);
-    if (!seen || seen.updatedAt <= run.updatedAt) latest.set(key, run);
-  }
+  const latest = latestRuns(runs);
   return STATE_ORDER.map((state) => ({
     state,
     runs: [...latest.values()].filter((run) => run.state === state).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)),

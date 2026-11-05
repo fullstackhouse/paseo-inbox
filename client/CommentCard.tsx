@@ -11,6 +11,7 @@ const PLACEMENT_NOTE: Record<Placement, string | null> = {
   inline: null,
   file: "on the file · posts in the review body",
   outside: "not on a changed line · posts in the review body",
+  drifted: "its line changed in the new commits · posts in the review body",
 };
 
 /** Severity picker: the three grades plus "note" (ungraded). */
@@ -74,7 +75,7 @@ export function CommentCard({
         {mine ? <Pill theme={theme} color={theme.colors.accent}>yours</Pill> : null}
         <Text onPress={onOpenFile} style={{ color: onOpenFile ? theme.colors.accent : theme.colors.foregroundMuted, fontSize: 12, flexShrink: 1 }} numberOfLines={1} ellipsizeMode="head">
           {comment.path}
-          {comment.line ? `:${comment.line}` : ""}
+          {comment.line ? (comment.drifted ? ` (was line ${comment.originalLine ?? comment.line})` : `:${comment.line}`) : ""}
         </Text>
         {comment.status !== "draft" && !mine ? <Text style={{ color: theme.colors.foregroundMuted, fontSize: 12 }}>{comment.status}</Text> : null}
       </View>

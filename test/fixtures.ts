@@ -20,6 +20,7 @@ export function pr(overrides: Partial<Pr> = {}): Pr {
     author: "ola",
     additions: 12,
     deletions: 3,
+    updatedAt: NOW,
     ...overrides,
   };
 }

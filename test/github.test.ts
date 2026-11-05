@@ -50,6 +50,7 @@ describe("GithubSource", () => {
       author: "ola",
       additions: 5,
       deletions: 1,
+      updatedAt: "2026-11-04T10:00:00Z",
     });
     expect(run.mock.calls[0]![0].slice(0, 4)).toEqual(["search", "prs", "is:open", "label:needs-qa"]);
     await source.search("is:open label:needs-qa");
