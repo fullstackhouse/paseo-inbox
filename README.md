@@ -67,7 +67,7 @@ Inbox agents get one MCP tool, `inbox_review_draft`. It takes a verdict, a confi
 - **Reading:** syntax colours in diffs. A markdown file the PR adds opens as a document, with comments under their paragraphs (Diff is one tap away). Markdown tables render. Each file has a Viewed box, which unticks if the file changes; "Not viewed" opens only the files you haven't seen. Tapping a comment's path jumps to its file.
 - **Your comments:** tap any diff line, or "Comment on the whole file", to add your own or to ask the reviewer about it. Regrade any comment (blocker, minor, nit, note).
 - **Talking to the reviewer:** "Ask about this" sends the agent a quoted message and opens it. Its changes arrive through `inbox_review_revise`, which never touches comments you wrote or decided on.
-- **Posting:** pick the verdict (a hint warns when it disagrees with the blockers still standing), then post. The bottom bar posts the review after a confirm, with the inline comments you didn't drop. If the PR has new commits since the draft, Post is refused: rerun to draft again.
+- **Posting:** pick the verdict (a hint warns when it disagrees with the blockers still standing), then post. The bottom bar's button names the verdict and posts in one click, with the inline comments you didn't drop. If the PR has new commits since the draft, Post is refused: rerun to draft again.
 
 ## Trust
 
@@ -92,7 +92,7 @@ On a host with plugin notifications (FSH's Paseo build, fullstackhouse/paseo#46)
 
 ## The write guard
 
-Agents the inbox starts get `gh` and `git` shims first on their `PATH`. They pass reads (`gh pr view|diff|checks|checkout`, `gh search`, `gh api` with GET or a GraphQL query) and refuse writes (`gh pr review|comment|merge|edit`, `gh issue create`, `gh api` POST/PATCH/DELETE, GraphQL mutations, `git push`). A refused command tells the agent to put it in an ask instead. An ask's Send button only sends a prompt back to the same guarded agent, so for reviews the write happens through the inbox card's **Post review** button, which the plugin runs outside the guard. The prompt preamble says the same. This guards against accidents, not against an agent that deliberately calls `/opt/homebrew/bin/gh`.
+Agents the inbox starts get `gh` and `git` shims first on their `PATH`. They pass reads (`gh pr view|diff|checks|checkout`, `gh search`, `gh api` with GET or a GraphQL query) and refuse writes (`gh pr review|comment|merge|edit`, `gh issue create`, `gh api` POST/PATCH/DELETE, GraphQL mutations, `git push`). A refused command tells the agent to put it in an ask instead. An ask's Send button only sends a prompt back to the same guarded agent, so for reviews the write happens through the inbox card's **Post as …** button, which the plugin runs outside the guard. The prompt preamble says the same. This guards against accidents, not against an agent that deliberately calls `/opt/homebrew/bin/gh`.
 
 ## The inbox screen
 
