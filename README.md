@@ -88,7 +88,7 @@ The reviewer reads the PR through `inbox_pr`: description, diff, and other revie
 
 ## Notifications
 
-Plugins can't send notifications yet. Paseo already notifies when a reviewer agent finishes, and the inbox adds a **Review draft ready → Open review** card to that agent's chat, so the notification lands one tap from the review.
+On a host with plugin notifications (FSH's Paseo build, fullstackhouse/paseo#46), a draft sends **Review draft ready**, and tapping it opens the review. Repeats for the same run are merged. Settings → Plugins → paseo-inbox → "Turn off notifications" mutes it. On other hosts, Paseo's "agent finished" notification opens the reviewer's chat, where the inbox adds a **Review draft ready → Open review** card.
 
 ## The write guard
 

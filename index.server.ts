@@ -47,6 +47,24 @@ export const PR_LABEL = "inbox.pr";
 const UNTRUSTED_ENV = "PASEO_INBOX_UNTRUSTED";
 export const REVIEW_CARD = "inbox-review";
 
+type Notifier = { notifications?: { send(input: { title: string; body: string; open?: { screen: string; params?: Record<string, string> }; key?: string }): Promise<unknown> } };
+
+/**
+ * "Review draft ready", opening the review screen. Only hosts with plugin notifications have
+ * `paseo.notifications` (FSH Paseo); elsewhere the chat card is the only signal.
+ */
+export async function notifyDraftReady(paseo: unknown, draft: { runId: string; pr: string; title: string; headline: string }): Promise<boolean> {
+  const notifications = (paseo as Notifier).notifications;
+  if (typeof notifications?.send !== "function") return false;
+  await notifications.send({
+    title: `Review draft ready · ${draft.pr.replace(/^[^/]+\//, "")}`.slice(0, 120),
+    body: `${draft.title} — ${draft.headline}`.slice(0, 500),
+    open: { screen: "review", params: { runId: draft.runId } },
+    key: `draft:${draft.runId}`,
+  });
+  return true;
+}
+
 export default function contribute(server: PluginServerContext) {
   const dir = dataDir();
   const shimDir = installShims(dir);
@@ -117,6 +135,8 @@ export default function contribute(server: PluginServerContext) {
       if (!paseo || !run.agentId) return;
       const pr = inbox.item(run.itemKey)?.pr;
       await paseo.agents.ref(run.agentId).timeline.append({ type: "plugin", id: REVIEW_CARD, kind: REVIEW_CARD, version: 1, data: { runId: run.id, headline, title: pr?.title ?? run.itemKey, pr: run.itemKey } });
+      // Hosts with plugin notifications (FSH Paseo) also notify, and tapping opens the review itself.
+      await notifyDraftReady(paseo, { runId: run.id, pr: run.itemKey, title: pr?.title ?? run.itemKey, headline }).catch((error) => console.error("notify failed", error));
     },
     archive: async (workspaceId) => {
       await paseo?.workspaces.archive(workspaceId);
