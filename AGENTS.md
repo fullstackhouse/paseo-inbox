@@ -29,6 +29,7 @@ Paseo plugin: GitHub PR searches → rules → one agent per match, with a PATH 
 - An ask's Send prompts the same guarded agent, so it can't perform the write. Writes go through a plugin RPC behind a UI button.
 - A GitHub rate limit on agent start keeps the run queued. The daemon's checkout-pr GraphQL call is the first thing to hit the limit.
 - `checkout-pr` makes a new worktree per run (`<branch>-N`); Dismiss archives them via `paseo.workspaces.archive`.
+- Runs start in background workspaces (hidden from the sidebar and from other plugins' default agent lists). A turn that starts after the run's own is the human taking over, so `turnStarted` un-hides the workspace with `setBackground(false)`. Only FSH Paseo has it (`features.workspaceBackgroundSet`); elsewhere the call is skipped.
 
 ## Commands
 

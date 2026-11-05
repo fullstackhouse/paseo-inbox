@@ -92,7 +92,6 @@ export function ReviewScreen({ theme, layout, navigation, params }: PluginScreen
   const [tab, setTab] = useState<Tab>("summary");
   const [openFiles, setOpenFiles] = useState<Set<string>>(new Set());
   const [closedChapters, setClosedChapters] = useState<Set<number>>(new Set());
-  const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const scroll = useRef<ScrollView>(null);
   const carried = useRef<string | null>(null);
@@ -118,7 +117,6 @@ export function ReviewScreen({ theme, layout, navigation, params }: PluginScreen
     setTab("summary");
     setOpenFiles(new Set());
     setClosedChapters(new Set());
-    setConfirming(false);
     scroll.current?.scrollTo({ y: 0, animated: false });
   }, [runId]);
 
@@ -248,7 +246,6 @@ export function ReviewScreen({ theme, layout, navigation, params }: PluginScreen
       fail(caught);
     } finally {
       setBusy(null);
-      setConfirming(false);
     }
   };
   const submit = () =>
@@ -649,15 +646,14 @@ export function ReviewScreen({ theme, layout, navigation, params }: PluginScreen
               <Text style={{ ...muted, flex: 1 }} numberOfLines={2}>
                 {stale ? "Move the comments or re-draft before posting." : `${live.length} comment${live.length === 1 ? "" : "s"}${folded ? ` (${folded} in the body)` : ""}${draft.comments.length > live.length ? ` · ${draft.comments.length - live.length} dropped` : ""}`}
               </Text>
-              {confirming ? <Chip theme={theme} label="Cancel" onPress={() => setConfirming(false)} /> : null}
               <Pressable
                 accessibilityRole="button"
-                accessibilityLabel={confirming ? "Confirm posting the review to GitHub" : "Post review"}
+                accessibilityLabel={`Post the review to GitHub as ${verdict}`}
                 disabled={!editable || Boolean(busy)}
-                onPress={() => (confirming ? void submit() : setConfirming(true))}
-                style={{ backgroundColor: confirming ? verdictColor(theme, verdict) : theme.colors.accent, paddingHorizontal: 16, paddingVertical: 10, borderRadius: 10, opacity: !editable || busy ? 0.5 : 1 }}
+                onPress={() => void submit()}
+                style={{ backgroundColor: verdictColor(theme, verdict), paddingHorizontal: 16, paddingVertical: 10, borderRadius: 10, opacity: !editable || busy ? 0.5 : 1 }}
               >
-                <Text style={{ color: theme.colors.accentForeground, fontWeight: "600", fontSize: 14 }}>{busy === "post" ? "Posting…" : confirming ? `Post as ${verdict}` : "Post review"}</Text>
+                <Text style={{ color: theme.colors.accentForeground, fontWeight: "600", fontSize: 14 }}>{busy === "post" ? "Posting…" : `Post as ${verdict}`}</Text>
               </Pressable>
             </View>
           </View>

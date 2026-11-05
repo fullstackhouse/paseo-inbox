@@ -33,6 +33,8 @@ export interface InboxDeps {
   me?: () => Promise<string>;
   /** Whether a run has a review draft, and whether it was posted. */
   draftOf?: (runId: string) => { posted: boolean } | null;
+  /** Moves a run's (background) workspace into the sidebar, once the human works in it. */
+  reveal?: (workspaceId: string) => Promise<void>;
   /** False until the plugin has a Paseo session to create agents with; queued runs wait. */
   ready?: () => boolean;
   now?: () => string;
@@ -176,6 +178,17 @@ export class Inbox {
         : { state: "failed", reason: outcome.kind === "failed" ? outcome.error.message : `canceled: ${outcome.reason}` };
     this.commit(setRun(this.state, run.id, patch, this.now()));
     void this.afterChange();
+  }
+
+  /**
+   * A turn after the run's own: the human took over (a message, an ask's Send, "Ask about this"),
+   * so its workspace leaves the background and shows in the sidebar.
+   */
+  turnStarted(agentId: string): void {
+    const run = this.runForAgent(agentId);
+    if (!run?.workspaceId || run.state === "running") return;
+    const { workspaceId } = run;
+    void this.deps.reveal?.(workspaceId).catch((error) => console.error("reveal failed", workspaceId, error));
   }
 
   agentGone(agentId: string): void {
