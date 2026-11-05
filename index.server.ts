@@ -1,4 +1,4 @@
-import type { PaseoApi } from "@getpaseo/client";
+import type { PaseoApi, PaseoWorkspaceHandle } from "@getpaseo/client";
 import type { PluginServerContext } from "@getpaseo/plugin/server";
 import { installBridge } from "./server/bridge";
 import { openInBrowser } from "./server/open";
@@ -140,6 +140,12 @@ export default function contribute(server: PluginServerContext) {
     },
     archive: async (workspaceId) => {
       await paseo?.workspaces.archive(workspaceId);
+    },
+    reveal: async (workspaceId) => {
+      if (!paseo) return;
+      // Hosts with workspaceBackgroundSet (FSH Paseo) have setBackground; elsewhere the run stays hidden.
+      const workspace = paseo.workspaces.ref(workspaceId) as PaseoWorkspaceHandle & { setBackground?: (background: boolean) => Promise<unknown> };
+      await workspace.setBackground?.(false);
     }, load: () => store.load(), save: (state) => store.save(state) });
 
   // Inbox agents, and only those, get the review-draft tool.
@@ -197,6 +203,10 @@ export default function contribute(server: PluginServerContext) {
   server.on("agent.turn_ended", ({ agent, outcome }, { paseo: api }) => {
     capture(api);
     inbox.turnEnded(agent.id, outcome);
+  });
+  server.on("agent.turn_started", ({ agent }, { paseo: api }) => {
+    capture(api);
+    inbox.turnStarted(agent.id);
   });
   server.on("agent.closed", ({ agent }) => inbox.agentGone(agent.id));
   server.on("agent.archived", ({ agent }) => inbox.agentGone(agent.id));

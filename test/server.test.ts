@@ -53,6 +53,18 @@ describe("Inbox", () => {
     expect(saved().runs[0]!.state).toBe("failed");
   });
 
+  it("reveals the run's workspace when a turn starts after the run's own", async () => {
+    const revealed: string[] = [];
+    const { inbox } = harness({ review: [pr()] }, { reveal: async (workspaceId) => void revealed.push(workspaceId) });
+    await inbox.poll();
+    inbox.turnStarted("agent-1");
+    expect(revealed).toEqual([]);
+    inbox.turnEnded("agent-1", { kind: "completed" });
+    inbox.turnStarted("agent-1");
+    inbox.turnStarted("someone-else");
+    expect(revealed).toEqual(["ws"]);
+  });
+
   it("marks a run failed when the agent can't start", async () => {
     const { inbox, saved } = harness({ review: [pr()] }, { start: async () => Promise.reject(new Error("no worktree")) });
     await inbox.poll();
