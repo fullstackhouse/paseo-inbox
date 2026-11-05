@@ -86,6 +86,7 @@ export function ReviewScreen({ theme, layout, navigation, params }: PluginScreen
   const [notice, setNotice] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>("summary");
   const [openFiles, setOpenFiles] = useState<Set<string>>(new Set());
+  const [closedChapters, setClosedChapters] = useState<Set<number>>(new Set());
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const scroll = useRef<ScrollView>(null);
@@ -109,6 +110,7 @@ export function ReviewScreen({ theme, layout, navigation, params }: PluginScreen
     setNotice(null);
     setTab("summary");
     setOpenFiles(new Set());
+    setClosedChapters(new Set());
     setConfirming(false);
     scroll.current?.scrollTo({ y: 0, animated: false });
   }, [runId]);
@@ -152,6 +154,7 @@ export function ReviewScreen({ theme, layout, navigation, params }: PluginScreen
     if (!details || detailsFor !== itemKey || opened.current === runId) return;
     opened.current = runId;
     setOpenFiles(new Set(details.files.filter((file) => !isViewed(draft, file)).map((file) => file.path)));
+    if (draft) setClosedChapters(new Set(chapterIndexes(walkthrough(draft, details.files), (path) => chapterViewed(draft, details.files, path))));
   }, [details, detailsFor, itemKey, draft, runId]);
   const chapters = useMemo(() => (draft ? walkthrough(draft, files) : []), [draft, files]);
   const commentsByFile = useMemo(() => {
@@ -251,6 +254,14 @@ export function ReviewScreen({ theme, layout, navigation, params }: PluginScreen
       return nextOpen;
     });
 
+  const toggleChapter = (index: number) =>
+    setClosedChapters((current) => {
+      const nextClosed = new Set(current);
+      if (nextClosed.has(index)) nextClosed.delete(index);
+      else nextClosed.add(index);
+      return nextClosed;
+    });
+
   const muted = { color: theme.colors.foregroundMuted, fontSize: 13 };
   const pad = layout.compact ? 14 : 24;
   const maxWidth = 980;
@@ -319,8 +330,14 @@ export function ReviewScreen({ theme, layout, navigation, params }: PluginScreen
                   void markViewed({ runId, path, patch: file.patch, viewed: value })
                     .then((next) => {
                       setDraft(next);
-                      // Ticking a file folds it away, like GitHub's "Viewed".
-                      if (value) toggleFile(path, false);
+                      // Ticking a file folds it away, like GitHub's "Viewed", and its chapter once every file in it is viewed.
+                      if (!value) return;
+                      toggleFile(path, false);
+                      const finished = chapterIndexes(
+                        walkthrough(next, files).map((chapter) => (chapter.files.includes(path) ? chapter : { files: [] })),
+                        (candidate) => chapterViewed(next, files, candidate),
+                      );
+                      if (finished.length) setClosedChapters((current) => new Set([...current, ...finished]));
                     })
                     .catch(fail)
               : undefined
@@ -418,19 +435,32 @@ export function ReviewScreen({ theme, layout, navigation, params }: PluginScreen
 
           {tab === "walkthrough" && draft && !details ? <ActivityIndicator color={theme.colors.foregroundMuted} /> : null}
           {tab === "walkthrough" && draft && details
-            ? chapters.map((chapter, index) => (
-                <View key={chapter.title + index} style={{ gap: 8, paddingBottom: 8 }}>
-                  <Text style={{ color: theme.colors.foreground, fontSize: 16, fontWeight: "700" }}>
-                    {chapter.other ? chapter.title : `${index + 1}. ${chapter.title}`}
-                    <Text style={{ ...muted, fontWeight: "400" }}>
-                      {"  "}
-                      {chapter.files.filter((path) => isViewed(draft, { path, patch: files.find((file) => file.path === path)?.patch })).length}/{chapter.files.length} viewed
-                    </Text>
-                  </Text>
-                  {chapter.body ? <Markdown text={chapter.body} theme={theme} size={14} /> : null}
-                  {chapter.files.map((path) => fileDiff(path))}
-                </View>
-              ))
+            ? chapters.map((chapter, index) => {
+                const open = !closedChapters.has(index);
+                const title = chapter.other ? chapter.title : `${index + 1}. ${chapter.title}`;
+                return (
+                  <View key={chapter.title + index} style={{ gap: 8, paddingBottom: 8 }}>
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityState={{ expanded: open }}
+                      accessibilityLabel={`${open ? "Collapse" : "Expand"} ${title}`}
+                      onPress={() => toggleChapter(index)}
+                      style={{ flexDirection: "row", alignItems: "flex-start", gap: 8 }}
+                    >
+                      <Text style={{ flex: 1, color: theme.colors.foreground, fontSize: 16, fontWeight: "700" }}>
+                        {title}
+                        <Text style={{ ...muted, fontWeight: "400" }}>
+                          {"  "}
+                          {chapter.files.filter((path) => chapterViewed(draft, files, path)).length}/{chapter.files.length} viewed
+                        </Text>
+                      </Text>
+                      <Text style={{ color: theme.colors.foregroundMuted, fontSize: 12, paddingTop: 4 }}>{open ? "▾" : "▸"}</Text>
+                    </Pressable>
+                    {open && chapter.body ? <Markdown text={chapter.body} theme={theme} size={14} /> : null}
+                    {open ? chapter.files.map((path) => fileDiff(path)) : null}
+                  </View>
+                );
+              })
             : null}
 
           {tab === "files" ? (
@@ -574,4 +604,13 @@ export function ReviewScreen({ theme, layout, navigation, params }: PluginScreen
       ) : null}
     </View>
   );
+}
+
+function chapterViewed(draft: ReviewDraft | null, files: PrDetails["files"], path: string) {
+  return isViewed(draft, { path, patch: files.find((file) => file.path === path)?.patch });
+}
+
+/** Indexes of the chapters whose every file passes `viewed`; those start (or become) folded. */
+function chapterIndexes(chapters: { files: string[] }[], viewed: (path: string) => boolean) {
+  return chapters.flatMap((chapter, index) => (chapter.files.length && chapter.files.every(viewed) ? [index] : []));
 }
