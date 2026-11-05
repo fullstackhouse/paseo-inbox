@@ -25,9 +25,9 @@ export class ReviewStore {
   }
 
   private path(runId: string): string {
-    // runId is `owner/repo#123|rule|sha`.
-    const [item = "", rule = "", sha = ""] = runId.split("|");
-    const safe = `${item.replace(/[/#]/g, "__")}@${sha}__${rule}`.replace(/[^\w@.-]/g, "_");
+    // runId is `owner/repo#123|rule|sha`, plus `|r2` for a later round at the same head.
+    const [item = "", rule = "", sha = "", round] = runId.split("|");
+    const safe = `${item.replace(/[/#]/g, "__")}@${sha}__${rule}${round ? `__${round}` : ""}`.replace(/[^\w@.-]/g, "_");
     return join(this.dir, `${safe}.json`);
   }
 }

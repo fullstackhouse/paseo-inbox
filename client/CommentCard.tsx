@@ -11,6 +11,7 @@ const PLACEMENT_NOTE: Record<Placement, string | null> = {
   inline: null,
   file: "on the file · posts in the review body",
   outside: "not on a changed line · posts in the review body",
+  drifted: "its line changed in the new commits · posts in the review body",
 };
 
 /** Severity picker: the three grades plus "note" (ungraded). */

@@ -39,6 +39,10 @@ export const ReviewInputSchema = z.object({
 });
 export type ReviewInput = z.infer<typeof ReviewInputSchema>;
 
+/** What a comment points at: the line's text and up to three neighbours each way (null = outside the hunk). */
+export const AnchorSchema = z.object({ text: z.string(), above: z.array(z.string().nullable()), below: z.array(z.string().nullable()), version: z.string() });
+export type Anchor = z.infer<typeof AnchorSchema>;
+
 export const CommentStatusSchema = z.enum(["draft", "kept", "edited", "dropped"]);
 
 export const StoredCommentSchema = CommentInputSchema.extend({
@@ -48,8 +52,15 @@ export const StoredCommentSchema = CommentInputSchema.extend({
   author: z.enum(["ai", "human"]).default("ai"),
   /** For an already-raised comment: post it as a reply in that thread instead of holding it back. */
   reply: z.boolean().default(false),
+  /** The code it points at, kept from the first move to a new head, so later moves match the same text. */
+  anchor: AnchorSchema.optional(),
+  /** Where it was written, before any move to a new head. */
+  originalLine: z.number().int().optional(),
+  /** Its line couldn't be found at the new head: it goes into the review body, not inline. */
+  drifted: z.boolean().optional(),
 });
 export type StoredComment = z.infer<typeof StoredCommentSchema>;
+
 
 /** An already-raised comment the human hasn't chosen to reply with is held back: it isn't posted. */
 export const isHeld = (comment: StoredComment) => comment.raised !== null && !comment.reply;
@@ -70,6 +81,10 @@ export const ReviewDraftSchema = ReviewInputSchema.extend({
   bodyOverride: z.string().optional(),
   /** Files the human marked viewed, with a fingerprint of the patch they saw: a changed patch unticks. */
   viewed: z.record(z.string(), z.string()).default({}),
+  /** The commit the summary, chapters and verdict describe, when the comments were moved on to `version`. */
+  reviewedVersion: z.string().optional(),
+  /** The last move to a new head without an AI run. */
+  reanchored: z.object({ from: z.string(), at: z.string(), moved: z.number(), drifted: z.number() }).optional(),
 });
 export type ReviewDraft = z.infer<typeof ReviewDraftSchema>;
 
@@ -223,11 +238,12 @@ export function walkthrough(draft: Pick<ReviewDraft, "chapters">, files: readonl
   return rest.length ? [...chapters, { title: "Other changes", body: "", files: rest, other: true }] : chapters;
 }
 
-export type Placement = "inline" | "file" | "outside";
+export type Placement = "inline" | "file" | "outside" | "drifted";
 
 /** Where a comment can go on GitHub: on its diff line, or (file-level, or off the diff) into the review body. */
-export function placement(comment: Pick<StoredComment, "path" | "line" | "side">, files: readonly { path: string; patch?: string }[]): Placement {
+export function placement(comment: Pick<StoredComment, "path" | "line" | "side" | "drifted">, files: readonly { path: string; patch?: string }[]): Placement {
   if (comment.line === null) return "file";
+  if (comment.drifted) return "drifted";
   const file = files.find((candidate) => candidate.path === comment.path);
   if (!file) return "outside";
   const line = comment.line;
@@ -268,9 +284,10 @@ export function composeReview(draft: ReviewDraft, files: readonly { path: string
     );
   }
   if (folded.length) {
-    sections.push(["### Additional notes", "", ...folded.map((comment) => `- \`${comment.path}${comment.line ? `:${comment.line}` : ""}\` — ${withGrade(comment.body, comment.severity).replace(/\n+/g, " ")}`)].join("\n"));
+    sections.push(["### Additional notes", "", ...folded.map((comment) => `- ${where(comment)} — ${withGrade(comment.body, comment.severity).replace(/\n+/g, " ")}`)].join("\n"));
   }
-  sections.push("<sub>Drafted with an AI reviewer; read, edited and sent by a human.</sub>");
+  const carried = draft.reviewedVersion && draft.reviewedVersion !== draft.version ? ` Reviewed at ${draft.reviewedVersion.slice(0, 7)}; the comments were moved to ${draft.version.slice(0, 7)} without a new review.` : "";
+  sections.push(`<sub>Drafted with an AI reviewer; read, edited and sent by a human.${carried}</sub>`);
   const generatedBody = sections.join("\n\n");
   return {
     generatedBody,
@@ -285,6 +302,14 @@ export function composeReview(draft: ReviewDraft, files: readonly { path: string
     inline: inline.length,
     folded: folded.length,
   };
+}
+
+/** A folded comment's place in the body; a drifted one quotes the code it was about, since that line changed. */
+function where(comment: StoredComment): string {
+  if (!comment.drifted) return `\`${comment.path}${comment.line ? `:${comment.line}` : ""}\``;
+  const code = comment.anchor?.text.trim();
+  const at = comment.anchor ? ` at ${comment.anchor.version.slice(0, 7)}` : "";
+  return `\`${comment.path}\` (line ${comment.originalLine ?? comment.line}${at}${code && code.length <= 120 && !code.includes("`") ? `, \`${code}\`` : ""}; changed since)`;
 }
 
 /** One line for the inbox row: verdict, confidence, and comment count by grade. */
