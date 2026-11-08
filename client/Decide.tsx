@@ -101,7 +101,6 @@ export function HandoffPanel({ theme, hasDraft, loadPeople, onHandoff, onCancel 
   const [to, setTo] = useState("");
   const [note, setNote] = useState("");
   const [sendDraft, setSendDraft] = useState(false);
-  const [confirming, setConfirming] = useState(false);
   useEffect(() => {
     void loadPeople()
       .then((value) => setPeople(value.people))
@@ -115,7 +114,7 @@ export function HandoffPanel({ theme, hasDraft, loadPeople, onHandoff, onCancel 
     <View style={{ gap: 8, borderWidth: 1, borderColor: theme.colors.accent, borderRadius: 10, padding: 12 }}>
       <Text style={{ color: theme.colors.foreground, fontWeight: "600" }}>Hand off this review</Text>
       <Text style={{ color: theme.colors.foregroundMuted, fontSize: 12 }}>Requests their review, withdraws yours, and leaves a note that names them.</Text>
-      <TextInput value={to} onChangeText={(value) => { setTo(value); setConfirming(false); }} placeholder="@login" placeholderTextColor={theme.colors.foregroundMuted} autoCapitalize="none" autoCorrect={false} style={input} />
+      <TextInput value={to} onChangeText={setTo} placeholder="@login" placeholderTextColor={theme.colors.foregroundMuted} autoCapitalize="none" autoCorrect={false} style={input} />
       {shown.length ? (
         <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
           {shown.map((person) => (
@@ -131,7 +130,7 @@ export function HandoffPanel({ theme, hasDraft, loadPeople, onHandoff, onCancel 
         </View>
       ) : null}
       <View style={{ flexDirection: "row", gap: 8 }}>
-        <Chip theme={theme} active label={confirming ? `Hand off to @${login}: sure?` : "Hand off"} disabled={!valid} onPress={() => (confirming ? onHandoff({ to: login, note, sendDraft }) : setConfirming(true))} />
+        <Chip theme={theme} active label={valid ? `Hand off to @${login}` : "Hand off"} disabled={!valid} onPress={() => onHandoff({ to: login, note, sendDraft })} />
         <Chip theme={theme} label="Cancel" onPress={onCancel} />
       </View>
     </View>

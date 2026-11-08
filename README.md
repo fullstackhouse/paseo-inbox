@@ -90,7 +90,7 @@ The reviewer reads the PR through `inbox_pr`: description, diff, and other revie
 
 - **Other reviewers' comments** show in the diff where they sit. When the reviewer's finding repeats one, it's marked *already raised* and held back. "Reply in thread" posts it as a reply there instead, and "Post as new" posts it as a new comment.
 - **Preview** shows exactly what Post sends: the event, the body, inline comments, replies, and what's held or folded. **Edit text** replaces the composed body until you **Reset**.
-- **Hand off** requests someone else's review, withdraws yours, and leaves a note naming them. Optionally it sends your draft as a COMMENT review, never as an approval or a request for changes.
+- **Hand off** (one click, no confirm) requests someone else's review, withdraws yours, and leaves a note naming them. Optionally it sends your draft as a COMMENT review, never as an approval or a request for changes.
 - **Paste a PR link** at the top of the Inbox to review any PR with the manual rule (`manualRule`, default the first rule).
 
 ## Notifications
