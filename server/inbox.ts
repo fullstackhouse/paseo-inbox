@@ -1,4 +1,4 @@
-import { DISMISSED, latestRound, modeFor, moveRun, plan, renderPrompt, providerFor, reopen, reopenable, requeue, runId, setRun, startable, type Config, type InboxView, type Pr, type Run, type State } from "../shared/inbox";
+import { DISMISSED, latestRound, modeFor, moveRun, noCheckoutReason, plan, renderPrompt, providerFor, reopen, reopenable, requeue, runId, setRun, startable, type Config, type InboxView, type Pr, type Run, type State } from "../shared/inbox";
 import { askedAgain, type ReviewRequest } from "../shared/rereview";
 
 /** At most this many "asked again?" timeline reads per poll. */
@@ -268,7 +268,7 @@ export class Inbox {
     // Under "manual", so a poll of the rule's own source never closes it for being absent there.
     this.commit(setRun(this.state, id, { source: "manual" }, now));
     const checkout = Object.keys(config.checkouts).some((repo) => repo.toLowerCase() === pr.repo.toLowerCase());
-    if (!checkout) this.commit(setRun(this.state, id, { state: "no-checkout", reason: `set checkouts["${pr.repo}"] in Settings → Inbox` }, now));
+    if (!checkout) this.commit(setRun(this.state, id, { state: "no-checkout", reason: noCheckoutReason(pr.repo) }, now));
     await this.dispatch(config);
     return this.run(id)!;
   }

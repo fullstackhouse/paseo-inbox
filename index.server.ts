@@ -12,9 +12,10 @@ import { Inbox, type StartRequest } from "./server/inbox";
 import { listen } from "./server/listener";
 import { handoffDraft, postDraft, previewDraft } from "./server/post";
 import { ReviewStore } from "./server/reviews";
+import { addToConfigFile, findClone } from "./server/checkouts";
 import { configPath, dataDir, expandCheckouts, loadConfig, StateStore } from "./server/store";
 import { callTool, permissionAnswer, PREAPPROVED } from "./server/tools";
-import { addPr, isUnconfigured, listInbox, pollNow, runNow, skipRun, type Config } from "./shared/inbox";
+import { addCheckout, addPr, findCheckout, isUnconfigured, listInbox, pollNow, runNow, skipRun, type Config } from "./shared/inbox";
 import { inboxSettings, readLegacyConfig } from "./shared/settings";
 import { decideTrust } from "./shared/trust";
 import {
@@ -354,6 +355,23 @@ export default function contribute(server: PluginServerContext) {
     const pr = await github.one(ref);
     const run = await inbox.addManual(pr);
     return { itemKey: pr.key, runId: run.id };
+  });
+  server.handle(findCheckout, ({ repo }, { paseo: api }) => {
+    capture(api);
+    let configured: string[] = [];
+    try {
+      configured = Object.values(currentConfig()?.checkouts ?? {});
+    } catch {
+      // An invalid config still lets the usual folders be searched.
+    }
+    return { path: findClone(repo, configured) };
+  });
+  server.handle(addCheckout, async ({ repo, path }, { paseo: api }) => {
+    capture(api);
+    if (fromSettings && !isUnconfigured(fromSettings)) throw new Error("The inbox reads Settings → Inbox; save the repo there");
+    addToConfigFile(configPath(), repo, path);
+    await inbox.poll();
+    return { ok: true as const };
   });
   server.handle(readLegacyConfig, (_input, { paseo: api }) => {
     capture(api);
