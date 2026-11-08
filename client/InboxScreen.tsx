@@ -1,10 +1,12 @@
 import type { PluginScreenProps } from "@getpaseo/plugin/client";
-import { useRpc } from "@getpaseo/plugin/client";
-import { useMemo, useState } from "react";
+import { useRpc, useSettings } from "@getpaseo/plugin/client";
+import { useEffect, useMemo, useState } from "react";
 import { Pressable, ScrollView, Text, TextInput, View } from "react-native";
-import { addPr, groupRuns, runNow, skipRun, type Run, type RunState } from "../shared/inbox";
+import { addCheckout, addPr, findCheckout, groupRuns, isUnconfigured, runNow, skipRun, type Run, type RunState } from "../shared/inbox";
 import { postReview } from "../shared/review";
+import { inboxSettings } from "../shared/settings";
 import { openScreen } from "./nav";
+import { useOpenUrl } from "./openUrl";
 import { REVIEW_SCREEN } from "./ReviewScreen";
 import { ago, Chip, MONO, Pill, verdictColor } from "./ui";
 import { useInbox } from "./useInbox";
@@ -36,6 +38,12 @@ export function InboxScreen({ theme, layout, navigation }: PluginScreenProps) {
   const rerun = useRpc(runNow);
   const dismiss = useRpc(skipRun);
   const add = useRpc(addPr);
+  const find = useRpc(findCheckout);
+  const addToFile = useRpc(addCheckout);
+  const settings = useSettings(inboxSettings);
+  const openUrl = useOpenUrl();
+  // Repo → a clone found on disk (null: none), for the runs waiting on a checkout.
+  const [clones, setClones] = useState<Record<string, string | null>>({});
   const post = useRpc(postReview);
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [posting, setPosting] = useState<string | null>(null);
@@ -48,6 +56,15 @@ export function InboxScreen({ theme, layout, navigation }: PluginScreenProps) {
   const settled = new Set<RunState>(["done", "skipped", "stale"]);
   const shown = groups.filter((group) => showSettled || !settled.has(group.state));
   const hidden = groups.filter((group) => settled.has(group.state)).reduce((sum, group) => sum + group.runs.length, 0);
+  const missing = useMemo(() => [...new Set((view?.runs ?? []).filter((run) => run.state === "no-checkout").map((run) => view?.items[run.itemKey]?.pr.repo).filter((repo): repo is string => Boolean(repo)))].sort().join(","), [view]);
+  useEffect(() => {
+    if (!missing) return;
+    let live = true;
+    void Promise.all(missing.split(",").map(async (repo) => [repo, (await find({ repo }).catch(() => ({ path: null }))).path] as const)).then((found) => live && setClones(Object.fromEntries(found)));
+    return () => {
+      live = false;
+    };
+  }, [missing, find]);
   const pad = layout.compact ? 12 : 24;
   const muted = { color: theme.colors.foregroundMuted, fontSize: 13 };
   const candidates = (view?.runs ?? []).filter(postable);
@@ -95,6 +112,15 @@ export function InboxScreen({ theme, layout, navigation }: PluginScreenProps) {
     }
   };
 
+  // Settings win once they hold sources or rules (the server's rule too); otherwise the legacy inbox.json applies.
+  const adoptClone = (key: string, repo: string, path: string) =>
+    act(key, async () => {
+      if (settings.status === "ready" && !isUnconfigured(settings.values)) {
+        if (!(await settings.save({ ...settings.values, checkouts: { ...settings.values.checkouts, [repo]: path } }, settings.revision))) throw new Error(settings.saveError ?? "Couldn't save settings");
+        await pollNow();
+      } else await addToFile({ repo, path });
+    });
+
   const submitLink = async () => {
     setAdding(true);
     setActionError(null);
@@ -116,8 +142,11 @@ export function InboxScreen({ theme, layout, navigation }: PluginScreenProps) {
     const open = () => {
       if (draft || run.reason?.startsWith("review ")) openScreen({ screenId: REVIEW_SCREEN, params: { runId: run.id } });
       else if (run.agentId && navigation) navigation.openAgent({ agentId: run.agentId });
+      else if (pr) openUrl(pr.url);
     };
-    const tappable = Boolean(draft || run.reason?.startsWith("review ") || (run.agentId && navigation));
+    const tappable = Boolean(draft || run.reason?.startsWith("review ") || (run.agentId && navigation) || pr);
+    const clone = run.state === "no-checkout" && pr ? clones[pr.repo] : undefined;
+    const detail = draft ? draft.detail : clone ? `Found a clone at ${clone}` : run.state === "no-checkout" && pr ? `No clone of ${pr.repo} on this machine. Add one under Settings → Inbox → Repos on this machine.` : (run.reason ?? run.rule);
     const checked = picked.has(run.id);
     return (
       <Pressable accessibilityRole={tappable ? "button" : undefined} disabled={!tappable} onPress={open} style={({ pressed }) => ({ backgroundColor: pressed ? theme.colors.surface2 : theme.colors.surface1, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, gap: 4 })}>
@@ -152,9 +181,10 @@ export function InboxScreen({ theme, layout, navigation }: PluginScreenProps) {
         <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
           {draft ? <Pill theme={theme} color={verdictColor(theme, draft.verdict)}>{draft.verdict}</Pill> : null}
           <Text style={{ ...muted, flex: 1 }} numberOfLines={2}>
-            {draft ? draft.detail : run.reason ?? run.rule}
+            {detail}
           </Text>
-          {run.state !== "running" && run.state !== "queued" ? (
+          {clone && pr ? <Chip theme={theme} label="Use it" active disabled={busy === key} style={{ paddingVertical: 4, paddingHorizontal: 10 }} textStyle={{ fontSize: 12 }} onPress={() => void adoptClone(key, pr.repo, clone)} /> : null}
+          {run.state !== "running" && run.state !== "queued" && run.state !== "no-checkout" ? (
             <Chip theme={theme} label={run.agentId ? "Rerun" : "Run now"} disabled={busy === key} style={{ paddingVertical: 4, paddingHorizontal: 10 }} textStyle={{ fontSize: 12 }} onPress={() => void act(key, () => rerun({ itemKey: run.itemKey, rule: run.rule }))} />
           ) : null}
           {run.state !== "running" && run.state !== "done" ? (

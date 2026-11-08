@@ -84,10 +84,18 @@ describe("plan", () => {
   it("holds a PR without a local checkout, and queues it once one is configured", () => {
     const other = pr({ repo: "acme/api" });
     let state = plan({ config: config(), results: { review: [other] }, state: emptyState(), now: NOW });
-    expect(state.runs[0]).toMatchObject({ state: "no-checkout", reason: 'set checkouts["acme/api"] in inbox.json' });
+    expect(state.runs[0]).toMatchObject({ state: "no-checkout", reason: "no clone of acme/api on this machine" });
     const withCheckout = config({ checkouts: { "acme/shop": "/src/shop", "ACME/api": "/src/api" } });
     state = plan({ config: withCheckout, results: { review: [other] }, state, now: later(5) });
     expect(state.runs[0]!.state).toBe("queued");
+  });
+
+  it("queues a held run once its repo gets a checkout, even when its source didn't answer", () => {
+    const other = pr({ repo: "acme/api" });
+    let state = plan({ config: config(), results: { review: [other] }, state: emptyState(), now: NOW });
+    state = { ...state, runs: state.runs.map((run) => ({ ...run, source: "manual" })) };
+    state = plan({ config: config({ checkouts: { "acme/shop": "/src/shop", "acme/api": "/src/api" } }), results: { review: [] }, state, now: later(5) });
+    expect(state.runs[0]).toMatchObject({ state: "queued", reason: undefined });
   });
 
   it("records manual rules as skipped until Run now", () => {

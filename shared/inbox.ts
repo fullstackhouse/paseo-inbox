@@ -113,6 +113,9 @@ const LEAVES: ReadonlySet<RunState> = new Set(["queued", "needs-decision", "no-c
 /** Reason on a run the human dismissed: later pushes don't queue that rule for that PR again. */
 export const DISMISSED = "dismissed";
 
+/** Why a run waits: the repo has no entry under Settings → Inbox → Repos on this machine. */
+export const noCheckoutReason = (repo: string) => `no clone of ${repo} on this machine`;
+
 export const prKey = (repo: string, number: number) => `${repo.toLowerCase()}#${number}`;
 export const runId = (itemKey: string, rule: string, version: string, round = 1) => `${itemKey}|${rule}|${version}${round > 1 ? `|r${round}` : ""}`;
 
@@ -207,7 +210,7 @@ export function plan({ config, results, state, now }: PlanInput): State {
       else if (dismissed(earlier)) next = null;
       else if (rule.rerun === "once" && earlier.some((run) => run.state !== "skipped" && run.state !== "no-checkout")) next = null;
       else if (rule.rerun === "manual") next = { ...base, state: "skipped", reason: "manual rule: use Run now" };
-      else if (!checkouts.has(pr.repo.toLowerCase())) next = { ...base, state: "no-checkout", reason: `set checkouts["${pr.repo}"] in inbox.json` };
+      else if (!checkouts.has(pr.repo.toLowerCase())) next = { ...base, state: "no-checkout", reason: noCheckoutReason(pr.repo) };
       else next = { ...base, state: "queued" };
 
       if (!next || (existing && existing.state === next.state && existing.reason === next.reason)) continue;
@@ -228,6 +231,12 @@ export function plan({ config, results, state, now }: PlanInput): State {
         : run,
     );
   }
+
+  // A run held for a checkout starts once its repo has one, even when its source didn't return it this poll (a pasted PR's never does).
+  runs = runs.map((run) => {
+    const repo = items[run.itemKey]?.pr.repo.toLowerCase();
+    return run.state === "no-checkout" && repo && checkouts.has(repo) ? { ...run, state: "queued", reason: undefined, updatedAt: now } : run;
+  });
 
   // Forget items no source has returned for KEEP_DAYS, with their runs.
   const cutoff = Date.parse(now) - KEEP_DAYS * 86_400_000;
@@ -324,7 +333,7 @@ export function reopen(state: State, config: Config, run: Run, ask: { at: string
   const round = atHead ? latestRound(state, run.itemKey, run.rule, head) + 1 : 1;
   const next = requeue(state, config, run.itemKey, run.rule, now, { round, reason: why, source: run.source });
   const checkout = Object.keys(config.checkouts).some((repo) => repo.toLowerCase() === item.pr.repo.toLowerCase());
-  return checkout ? next : setRun(next, runId(run.itemKey, run.rule, head, round), { state: "no-checkout", reason: `set checkouts["${item.pr.repo}"] in Settings → Inbox` }, now);
+  return checkout ? next : setRun(next, runId(run.itemKey, run.rule, head, round), { state: "no-checkout", reason: noCheckoutReason(item.pr.repo) }, now);
 }
 
 /**
@@ -387,6 +396,10 @@ export const runNow = defineRpc({ name: "inbox.run_now", input: RunKeySchema, ou
 export const skipRun = defineRpc({ name: "inbox.skip", input: RunKeySchema, output: z.object({ ok: z.literal(true) }) });
 /** Queue a review for any PR by URL (or owner/repo#123), with the manual rule. */
 export const addPr = defineRpc({ name: "inbox.add_pr", input: z.object({ ref: z.string().min(1) }), output: z.object({ itemKey: z.string(), runId: z.string() }) });
+/** A local clone of `repo` the inbox found on disk (origin points at it), or null. */
+export const findCheckout = defineRpc({ name: "inbox.checkout_find", input: z.object({ repo: z.string() }), output: z.object({ path: z.string().nullable() }) });
+/** Adds `repo → path` to the legacy inbox.json. With settings in use, the client saves settings itself (servers can't write them). */
+export const addCheckout = defineRpc({ name: "inbox.checkout_add", input: z.object({ repo: z.string(), path: z.string() }), output: z.object({ ok: z.literal(true) }) });
 export const pollNow = defineRpc({ name: "inbox.poll_now", input: z.object({}), output: InboxViewSchema });
 
 // ---------- View helpers ----------
