@@ -2,7 +2,7 @@ import type { PluginScreenProps } from "@getpaseo/plugin/client";
 import { useRpc } from "@getpaseo/plugin/client";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Pressable, ScrollView, Text, View } from "react-native";
-import { DISMISSED, restoreRun, runNow, skipRun, type Run } from "../shared/inbox";
+import { addPr, DISMISSED, restoreRun, reviewRunFor, runNow, skipRun, type Run } from "../shared/inbox";
 import {
   addReviewComment,
   deleteReviewComment,
@@ -59,6 +59,12 @@ export function ReviewScreen({ theme, layout, navigation, params }: PluginScreen
   const { view, refresh } = useInbox(10_000);
   const [runId, setRunId] = useState(params.runId ?? "");
   useEffect(() => setRunId(params.runId ?? ""), [params.runId]);
+  // Opened by PR (`{ pr }`, e.g. from paseo-prs): show that PR's newest review once the inbox loads.
+  const prRef = params.runId ? "" : (params.pr ?? "");
+  const byPr = prRef && view ? reviewRunFor(view.runs, view, prRef) : null;
+  useEffect(() => {
+    if (byPr && !runId) setRunId(byPr.id);
+  }, [byPr, runId]);
   const run = view?.runs.find((candidate) => candidate.id === runId) ?? null;
   const pr = run ? view?.items[run.itemKey]?.pr : undefined;
 
@@ -72,6 +78,7 @@ export function ReviewScreen({ theme, layout, navigation, params }: PluginScreen
   const post = useRpc(postReview);
   const discuss = useRpc(discussReview);
   const redraft = useRpc(runNow);
+  const startReview = useRpc(addPr);
   const dismiss = useRpc(skipRun);
   const markViewed = useRpc(setFileViewed);
   const preview = useRpc(previewReview);
@@ -305,6 +312,36 @@ export function ReviewScreen({ theme, layout, navigation, params }: PluginScreen
   const maxWidth = 980;
   const small = { paddingVertical: 4, paddingHorizontal: 10 };
 
+  if (!runId && prRef && (!view || byPr)) {
+    return (
+      <View style={{ flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: theme.colors.surface0 }}>
+        <ActivityIndicator color={theme.colors.foregroundMuted} />
+      </View>
+    );
+  }
+  if (!runId && prRef) {
+    const start = async () => {
+      setBusy("start");
+      setError(null);
+      try {
+        const started = await startReview({ ref: prRef });
+        await refresh();
+        setRunId(started.runId);
+      } catch (caught) {
+        fail(caught);
+      } finally {
+        setBusy(null);
+      }
+    };
+    return (
+      <View style={{ flex: 1, padding: pad, gap: 12, alignItems: "flex-start", backgroundColor: theme.colors.surface0 }}>
+        <Text style={{ color: theme.colors.foreground, fontSize: 15, fontWeight: "600" }}>No review of {prRef} yet</Text>
+        <Text style={muted}>Start one and a reviewer drafts it here. You read and post it from this screen.</Text>
+        <Chip theme={theme} active label={busy === "start" ? "Starting…" : "Start review"} disabled={busy === "start"} onPress={() => void start()} />
+        {error ? <Text style={{ color: theme.colors.statusDanger, fontSize: 13 }}>{error}</Text> : null}
+      </View>
+    );
+  }
   if (!runId || (view && !run)) {
     return (
       <View style={{ flex: 1, padding: pad, backgroundColor: theme.colors.surface0 }}>
@@ -484,7 +521,7 @@ export function ReviewScreen({ theme, layout, navigation, params }: PluginScreen
                 </View>
               </View>
             ) : (
-              <Text style={muted}>No review draft for this run yet.</Text>
+              <Text style={muted}>No review draft for this run yet{run.reason ? ` (${run.reason})` : ""}.</Text>
             )
           ) : null}
 

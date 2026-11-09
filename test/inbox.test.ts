@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ConfigSchema, DISMISSED, draftsReviews, globToRegExp, groupRuns, matchesQuery, mismatch, needsDecisionCount, opensReview, plan, renderPrompt, requeue, runId, setRun, startable, type Run } from "../shared/inbox";
+import { ConfigSchema, DISMISSED, draftsReviews, globToRegExp, groupRuns, matchesQuery, mismatch, needsDecisionCount, opensReview, plan, renderPrompt, requeue, reviewRunFor, runId, setRun, startable, type Run } from "../shared/inbox";
 import { config, emptyState, later, NOW, pr } from "./fixtures";
 
 const states = (state: ReturnType<typeof plan>) => state.runs.map((run) => [run.rule, run.version, run.state]);
@@ -230,5 +230,28 @@ describe("matchesQuery", () => {
     expect(matchesQuery(run, item, "https://github.com/Acme/shop/pull/7#issuecomment-1")).toBe(true);
     expect(matchesQuery(run, item, "https://github.com/acme/shop/pull/70")).toBe(false);
     expect(matchesQuery(run, item, "acme/shop#7")).toBe(true);
+  });
+});
+
+describe("reviewRunFor", () => {
+  const view = { reviewRules: ["draft-review"], drafts: [] };
+  const run = (id: string, patch: Partial<Run>): Run => ({ id, itemKey: "acme/shop#7", source: "review", rule: "draft-review", version: "a", state: "done", updatedAt: NOW, ...patch });
+
+  it("picks the PR's newest run that opens a review, by link or owner/repo#N", () => {
+    const runs = [
+      run("old", { reason: "review posted: x" }),
+      run("new", { state: "needs-decision", reason: "review approve 80%", updatedAt: later(5) }),
+      run("qa", { rule: "qa", state: "running", updatedAt: later(9) }),
+      run("other", { itemKey: "acme/shop#8", state: "needs-decision", reason: "review x", updatedAt: later(9) }),
+    ];
+    expect(reviewRunFor(runs, view, "https://github.com/Acme/shop/pull/7")?.id).toBe("new");
+    expect(reviewRunFor(runs, view, "acme/shop#7")?.id).toBe("new");
+  });
+
+  it("is null for a PR without a review run or a ref that is not a PR", () => {
+    const runs = [run("qa", { rule: "qa", state: "running" })];
+    expect(reviewRunFor(runs, view, "acme/shop#7")).toBeNull();
+    expect(reviewRunFor(runs, view, "acme/shop#9")).toBeNull();
+    expect(reviewRunFor(runs, view, "not a pr")).toBeNull();
   });
 });

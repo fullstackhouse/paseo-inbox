@@ -431,6 +431,17 @@ export const opensReview = (run: Run, view: Pick<InboxView, "reviewRules" | "dra
   Boolean(view?.drafts?.includes(run.id)) ||
   ((run.state === "running" || run.state === "queued") && Boolean(view?.reviewRules?.includes(run.rule)));
 
+/**
+ * The newest run of the PR in `ref` that opens the review screen, else null. Other plugins open the
+ * review screen with `{ pr: ref }` (a PR link or `owner/repo#N`), so this lookup is a public contract.
+ */
+export function reviewRunFor(runs: readonly Run[], view: Pick<InboxView, "reviewRules" | "drafts"> | null, ref: string): Run | null {
+  const parsed = parsePrRef(ref);
+  if (!parsed) return null;
+  const key = prKey(parsed.repo, parsed.number);
+  return runs.filter((run) => run.itemKey === key && opensReview(run, view)).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0] ?? null;
+}
+
 /** `https://github.com/o/r/pull/12` or `o/r#12` → repo and number. */
 export function parsePrRef(ref: string): { repo: string; number: number } | null {
   const url = /github\.com\/([\w.-]+\/[\w.-]+)\/pull\/(\d+)/.exec(ref);
