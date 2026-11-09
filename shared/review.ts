@@ -337,7 +337,7 @@ export const INSTRUCTIONS = `paseo-inbox started you for one pull request. When 
 
 Writing: plain words and short sentences that someone who hasn't read the diff can follow. Lead with the point. Describe the effect a person would see before the mechanism.
 
-summary (markdown): what the PR does and why, general to specific. A small PR gets one or two paragraphs with no headings. Longer ones use these ### sections in order, each opening with its emoji, and leave out any with nothing real in them: 🎯 the problem (no identifiers), 🔧 the fix, 🔍 details, ⚠️ worth knowing. Describe the PR, not your review of it.
+summary (markdown): what the PR does and why, general to specific. Always use these ### sections in order, each opening with its emoji, and leave out any with nothing real in them: 🎯 the problem (no identifiers), 🔧 the fix, 🔍 details, ⚠️ worth knowing. Describe the PR, not your review of it.
 
 reasoning (markdown): one lead sentence naming the deciding finding, or "No blockers.", then 2-5 bullets, each opening with a bolded two-to-three-word lead and holding one fact ("**Ran the tests** — ..."). End with what you couldn't settle and what would settle it.
 
