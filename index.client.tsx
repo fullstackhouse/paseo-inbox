@@ -6,6 +6,7 @@ import { setOpenScreen } from "./client/nav";
 import { REVIEW_CARD, ReviewCard, ReviewCardSchema } from "./client/ReviewCard";
 import { InboxSettings } from "./client/SettingsScreen";
 import { REVIEW_SCREEN, ReviewScreen } from "./client/ReviewScreen";
+import { observeSnoozedWorkspaces, useSnoozedWorkspaceIds } from "./client/snoozed";
 import { useInbox } from "./client/useInbox";
 import { needsDecisionCount } from "./shared/inbox";
 
@@ -16,7 +17,8 @@ function attentionColor(theme: PluginSidebarItemProps["theme"]): string {
 
 function InboxItem({ currentScreen, openScreen, theme }: PluginSidebarItemProps) {
   const { view } = useInbox(60_000);
-  const count = needsDecisionCount(view?.runs ?? []);
+  const snoozed = useSnoozedWorkspaceIds();
+  const count = needsDecisionCount(view?.runs ?? [], snoozed);
   return (
     <SidebarRow
       icon="Inbox"
@@ -35,5 +37,5 @@ export default function contribute(client: PluginClientContext) {
   client.addTimelineRenderer({ kind: REVIEW_CARD, version: 1, schema: ReviewCardSchema, Component: ReviewCard });
   client.addCommandCenterItem({ id: "settings", title: "Inbox settings", icon: "Settings", context: "global", onSelect: ({ openSettings }) => openSettings("inbox") });
   client.addSidebarHeaderItem({ id: INBOX_SCREEN, title: "Inbox", Component: InboxItem });
-  return () => {};
+  return observeSnoozedWorkspaces(client, "inbox");
 }

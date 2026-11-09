@@ -15,7 +15,7 @@ git clone https://github.com/fullstackhouse/paseo-inbox && cd paseo-inbox && npm
 paseo plugin install "$PWD"
 ```
 
-Paseo shows an **Inbox** row in the sidebar. It does nothing until you write `~/.paseo/inbox.json`.
+Paseo shows an **Inbox** row in the sidebar, with the number of runs waiting on your decision; runs in snoozed workspaces stay out of that number. It does nothing until you write `~/.paseo/inbox.json`.
 
 ## Configure
 
