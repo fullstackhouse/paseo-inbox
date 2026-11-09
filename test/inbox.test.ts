@@ -184,7 +184,21 @@ describe("groupRuns", () => {
       ["needs-decision", ["acme/shop#9"]],
       ["queued", ["acme/shop#7"]],
     ]);
-    expect(needsDecisionCount(state.runs)).toBe(1);
+    expect(needsDecisionCount(state.runs, new Set())).toBe(1);
+  });
+});
+
+describe("needsDecisionCount", () => {
+  const run = (id: string, state: Run["state"], workspaceId?: string): Run => ({ id, itemKey: `o/r#${id}`, source: "review", rule: "draft-review", version: "a", state, workspaceId, updatedAt: NOW });
+  const runs = [run("1", "needs-decision", "w1"), run("2", "needs-decision", "w2"), run("3", "needs-decision"), run("4", "queued", "w1")];
+
+  it("counts runs waiting on a decision", () => {
+    expect(needsDecisionCount(runs, new Set())).toBe(3);
+  });
+
+  it("leaves out runs in snoozed workspaces", () => {
+    expect(needsDecisionCount(runs, new Set(["w2"]))).toBe(2);
+    expect(needsDecisionCount(runs, new Set(["w1", "w2"]))).toBe(1);
   });
 });
 

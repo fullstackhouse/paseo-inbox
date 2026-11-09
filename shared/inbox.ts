@@ -458,5 +458,8 @@ export function matchesQuery(run: Run, pr: Pr | undefined, query: string): boole
   return query.toLowerCase().split(/\s+/).filter(Boolean).every((term) => haystack.includes(term));
 }
 
-export const needsDecisionCount = (runs: readonly Run[]) =>
-  groupRuns(runs).find((group) => group.state === "needs-decision")?.runs.length ?? 0;
+/** The sidebar counter: runs waiting on your decision, leaving out workspaces you snoozed. */
+export const needsDecisionCount = (runs: readonly Run[], snoozed: ReadonlySet<string>) =>
+  groupRuns(runs)
+    .find((group) => group.state === "needs-decision")
+    ?.runs.filter((run) => !run.workspaceId || !snoozed.has(run.workspaceId)).length ?? 0;
