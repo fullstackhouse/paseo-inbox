@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ConfigSchema, DISMISSED, draftsReviews, globToRegExp, groupRuns, mismatch, needsDecisionCount, opensReview, plan, renderPrompt, requeue, runId, setRun, startable, type Run } from "../shared/inbox";
+import { ConfigSchema, DISMISSED, draftsReviews, globToRegExp, groupRuns, matchesQuery, mismatch, needsDecisionCount, opensReview, plan, renderPrompt, requeue, runId, setRun, startable, type Run } from "../shared/inbox";
 import { config, emptyState, later, NOW, pr } from "./fixtures";
 
 const states = (state: ReturnType<typeof plan>) => state.runs.map((run) => [run.rule, run.version, run.state]);
@@ -206,5 +206,29 @@ describe("opensReview", () => {
   it("opens a drafted review, and not a finished run that never drafted one", () => {
     expect(opensReview(at("needs-decision", "draft-review", "review drafted: approve · 90%"), view)).toBe(true);
     expect(opensReview(at("needs-decision", "draft-review", "turn ended without a draft"), view)).toBe(false);
+  });
+
+  it("opens a dismissed run whose draft is still saved", () => {
+    expect(opensReview(at("done", "draft-review", DISMISSED), view)).toBe(false);
+    expect(opensReview(at("done", "draft-review", DISMISSED), { ...view, drafts: ["r"] })).toBe(true);
+  });
+});
+
+describe("matchesQuery", () => {
+  const run: Run = { id: "r", itemKey: "acme/shop#7", source: "review", rule: "draft-review", version: "a", state: "done", reason: DISMISSED, updatedAt: NOW };
+  const item = { ...pr(), title: "Fix the checkout total", author: "dawid", labels: ["needs-qa"] };
+
+  it("matches every term against key, title, author, labels, rule and reason, ignoring case", () => {
+    expect(matchesQuery(run, item, "checkout FIX")).toBe(true);
+    expect(matchesQuery(run, item, "shop#7 dawid")).toBe(true);
+    expect(matchesQuery(run, item, "needs-qa dismissed")).toBe(true);
+    expect(matchesQuery(run, item, "checkout refund")).toBe(false);
+    expect(matchesQuery(run, undefined, "acme")).toBe(true);
+  });
+
+  it("matches a pasted PR link to that PR only, even with a comment anchor", () => {
+    expect(matchesQuery(run, item, "https://github.com/Acme/shop/pull/7#issuecomment-1")).toBe(true);
+    expect(matchesQuery(run, item, "https://github.com/acme/shop/pull/70")).toBe(false);
+    expect(matchesQuery(run, item, "acme/shop#7")).toBe(true);
   });
 });

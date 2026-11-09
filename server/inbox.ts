@@ -3,6 +3,7 @@ import { askedAgain, type ReviewRequest } from "../shared/rereview";
 
 /** At most this many "asked again?" timeline reads per poll. */
 const REOPEN_CHECKS = 10;
+const SETTLED: ReadonlySet<Run["state"]> = new Set(["done", "stale", "failed"]);
 
 export interface StartRequest {
   run: Run;
@@ -33,6 +34,8 @@ export interface InboxDeps {
   me?: () => Promise<string>;
   /** Whether a run has a review draft, and whether it was posted. */
   draftOf?: (runId: string) => { posted: boolean } | null;
+  /** Whether a run has a review draft on disk; cheaper than `draftOf`, asked on every list. */
+  hasDraft?: (runId: string) => boolean;
   /** Moves a run's (background) workspace into the sidebar, once the human works in it. */
   reveal?: (workspaceId: string) => Promise<void>;
   /** False until the plugin has a Paseo session to create agents with; queued runs wait. */
@@ -60,7 +63,14 @@ export class Inbox {
   }
 
   view(): InboxView {
-    return { items: this.state.items, runs: this.state.runs, lastPollAt: this.lastPollAt, errors: this.errors, reviewRules: this.reviewRules() };
+    return { items: this.state.items, runs: this.state.runs, lastPollAt: this.lastPollAt, errors: this.errors, reviewRules: this.reviewRules(), drafts: this.settledDrafts() };
+  }
+
+  /** Settled runs whose reason no longer says "review …" (dismissed, stale, done) but whose draft is still saved. */
+  private settledDrafts(): string[] {
+    const hasDraft = this.deps.hasDraft;
+    if (!hasDraft) return [];
+    return this.state.runs.filter((run) => SETTLED.has(run.state) && !run.reason?.startsWith("review ") && hasDraft(run.id)).map((run) => run.id);
   }
 
   /** An invalid config already shows in `errors`; it just means no row opens the review screen early. */
@@ -249,6 +259,13 @@ export class Inbox {
 
   item(key: string) {
     return this.state.items[key] ?? null;
+  }
+
+  /** Undo Dismiss: the run is back to needs-decision with `reason`, without announcing it again. */
+  restore(runId: string, reason: string): void {
+    const run = this.run(runId);
+    if (!run || run.state !== "done" || run.reason !== DISMISSED) throw new Error("Only a dismissed run can be restored");
+    this.commit(setRun(this.state, runId, { state: "needs-decision", reason }, this.now()));
   }
 
   /** A review draft was saved: the human has something to decide on, even if the agent is still finishing. */

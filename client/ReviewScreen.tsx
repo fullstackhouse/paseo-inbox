@@ -2,7 +2,7 @@ import type { PluginScreenProps } from "@getpaseo/plugin/client";
 import { useRpc } from "@getpaseo/plugin/client";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Pressable, ScrollView, Text, View } from "react-native";
-import { runNow, skipRun, type Run } from "../shared/inbox";
+import { DISMISSED, restoreRun, runNow, skipRun, type Run } from "../shared/inbox";
 import {
   addReviewComment,
   deleteReviewComment,
@@ -63,6 +63,7 @@ export function ReviewScreen({ theme, layout, navigation, params }: PluginScreen
   const pr = run ? view?.items[run.itemKey]?.pr : undefined;
 
   const fetchDraft = useRpc(getReview);
+  const restoreDraft = useRpc(restoreRun);
   const fetchDetails = useRpc(getPrDetails);
   const changeComment = useRpc(updateReviewComment);
   const addComment = useRpc(addReviewComment);
@@ -270,6 +271,12 @@ export function ReviewScreen({ theme, layout, navigation, params }: PluginScreen
       carried.current = `Comments moved to the new head: ${result.moved} moved, ${result.unchanged} unchanged${result.drifted ? `, ${result.drifted} drifted (their line changed; they go in the review body)` : ""}.`;
       setRunId(result.runId);
     });
+  const dismissed = Boolean(draft && !draft.postedUrl && run?.state === "done" && run.reason === DISMISSED);
+  const restore = () =>
+    act("restore", async () => {
+      if (run) await restoreDraft({ runId: run.id });
+      await refresh();
+    });
   const rerun = () =>
     act("redraft", async () => {
       if (run) await redraft({ itemKey: run.itemKey, rule: run.rule });
@@ -438,6 +445,12 @@ export function ReviewScreen({ theme, layout, navigation, params }: PluginScreen
               </Text>
               {draft && !draft.postedUrl ? <Chip theme={theme} active label={busy === "reanchor" ? "Moving…" : "Move comments to the new head"} disabled={Boolean(busy)} onPress={() => void carry()} /> : null}
               <Chip theme={theme} label={busy === "redraft" ? "Re-drafting…" : "Re-draft at the new head"} disabled={Boolean(busy)} onPress={() => void rerun()} />
+            </View>
+          ) : null}
+          {dismissed ? (
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+              <Text style={{ ...muted, flex: 1, minWidth: 220 }}>You dismissed this review ({ago(run.updatedAt)} ago). Restore it to edit and post it.</Text>
+              <Chip theme={theme} active label={busy === "restore" ? "Restoring…" : "Restore"} disabled={Boolean(busy)} onPress={() => void restore()} />
             </View>
           ) : null}
           {notice ? <Text style={{ color: theme.colors.statusSuccess, fontSize: 13 }}>{notice}</Text> : null}
