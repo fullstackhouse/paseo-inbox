@@ -1,7 +1,9 @@
 import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import { z } from "zod";
-import { prKey, type Checks, type Pr } from "../shared/inbox";
+import { parsePrRef, prKey, type Checks, type Pr } from "../shared/inbox";
+
+export { parsePrRef };
 
 const exec = promisify(execFile);
 
@@ -330,14 +332,6 @@ export async function reviewRequests(repo: string, number: number, run: Gh = gh)
   return RequestsSchema.parse(JSON.parse(out)).data.repository.pullRequest.timelineItems.nodes.flatMap((node) =>
     node.createdAt ? [{ at: node.createdAt, reviewer: node.requestedReviewer?.__typename === "User" ? (node.requestedReviewer.login ?? null) : null, by: node.actor?.login ?? "" }] : [],
   );
-}
-
-/** `https://github.com/o/r/pull/12` or `o/r#12` → repo and number. */
-export function parsePrRef(ref: string): { repo: string; number: number } | null {
-  const url = /github\.com\/([\w.-]+\/[\w.-]+)\/pull\/(\d+)/.exec(ref);
-  if (url) return { repo: url[1]!, number: Number(url[2]) };
-  const short = /^([\w.-]+\/[\w.-]+)#(\d+)$/.exec(ref.trim());
-  return short ? { repo: short[1]!, number: Number(short[2]) } : null;
 }
 
 /** Org and team membership for trust rules, cached for an hour. A failed lookup is "not a member". */

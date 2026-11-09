@@ -122,6 +122,19 @@ describe("Inbox", () => {
     expect(started).toHaveLength(1);
   });
 
+  it("lists settled runs that still have a draft, and restores a dismissed one", async () => {
+    const { inbox, saved } = harness({ review: [pr()] }, { hasDraft: () => true });
+    await inbox.poll();
+    const id = saved().runs[0]!.id;
+    expect(() => inbox.restore(id, "review drafted: approve")).toThrow(/Only a dismissed run/);
+    inbox.turnEnded("agent-1", { kind: "completed" });
+    await inbox.skip(saved().runs[0]!.itemKey, saved().runs[0]!.rule);
+    expect(inbox.view().drafts).toEqual([id]);
+    inbox.restore(id, "review drafted: approve");
+    expect(saved().runs[0]).toMatchObject({ state: "needs-decision", reason: "review drafted: approve" });
+    expect(inbox.view().drafts).toEqual([]);
+  });
+
   it("lists the rules that draft reviews, and none for an invalid config", () => {
     expect(harness({}).inbox.view().reviewRules).toEqual(["draft-review"]);
     const invalid = harness({}, { loadConfig: () => { throw new Error("bad"); } });

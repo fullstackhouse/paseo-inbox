@@ -2,7 +2,7 @@ import type { PluginScreenProps } from "@getpaseo/plugin/client";
 import { useRpc, useSettings } from "@getpaseo/plugin/client";
 import { useEffect, useMemo, useState } from "react";
 import { Pressable, ScrollView, Text, TextInput, View } from "react-native";
-import { addCheckout, addPr, findCheckout, groupRuns, isUnconfigured, opensReview, runNow, skipRun, type Run, type RunState } from "../shared/inbox";
+import { addCheckout, addPr, findCheckout, groupRuns, isUnconfigured, matchesQuery, opensReview, parsePrRef, runNow, skipRun, type Run, type RunState } from "../shared/inbox";
 import { postReview } from "../shared/review";
 import { inboxSettings } from "../shared/settings";
 import { openScreen } from "./nav";
@@ -52,9 +52,14 @@ export function InboxScreen({ theme, layout, navigation }: PluginScreenProps) {
   const [busy, setBusy] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [showSettled, setShowSettled] = useState(false);
-  const groups = useMemo(() => groupRuns(view?.runs ?? []), [view]);
+  // The link field doubles as search: while it holds text, every run that matches shows, settled ones too.
+  const query = link.trim();
+  const groups = useMemo(
+    () => (query ? groupRuns(view?.runs ?? []).map((group) => ({ ...group, runs: group.runs.filter((run) => matchesQuery(run, view?.items[run.itemKey]?.pr, query)) })).filter((group) => group.runs.length) : groupRuns(view?.runs ?? [])),
+    [view, query],
+  );
   const settled = new Set<RunState>(["done", "skipped", "stale"]);
-  const shown = groups.filter((group) => showSettled || !settled.has(group.state));
+  const shown = groups.filter((group) => query || showSettled || !settled.has(group.state));
   const hidden = groups.filter((group) => settled.has(group.state)).reduce((sum, group) => sum + group.runs.length, 0);
   const missing = useMemo(() => [...new Set((view?.runs ?? []).filter((run) => run.state === "no-checkout").map((run) => view?.items[run.itemKey]?.pr.repo).filter((repo): repo is string => Boolean(repo)))].sort().join(","), [view]);
   useEffect(() => {
@@ -205,19 +210,19 @@ export function InboxScreen({ theme, layout, navigation }: PluginScreenProps) {
         <TextInput
           value={link}
           onChangeText={setLink}
-          placeholder="Paste a PR link to review it"
+          placeholder="Search, or paste a PR link to review it"
           placeholderTextColor={theme.colors.foregroundMuted}
           autoCapitalize="none"
           autoCorrect={false}
-          onSubmitEditing={() => link.trim() && void submitLink()}
+          onSubmitEditing={() => parsePrRef(query) && void submitLink()}
           style={{ flex: 1, color: theme.colors.foreground, fontSize: 14, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 8 }}
         />
-        <Chip theme={theme} label={adding ? "Adding…" : "Review"} disabled={adding || !link.trim()} onPress={() => void submitLink()} />
+        <Chip theme={theme} label={adding ? "Adding…" : "Review"} disabled={adding || !parsePrRef(query)} onPress={() => void submitLink()} />
       </View>
       {[error, actionError, ...(view?.errors ?? [])].filter(Boolean).map((message) => (
         <Text key={message} style={{ color: theme.colors.statusDanger, fontSize: 13 }}>{message}</Text>
       ))}
-      {view && !shown.length ? <Text style={muted}>Nothing to do.</Text> : null}
+      {view && !shown.length ? <Text style={muted}>{!query ? "Nothing to do." : parsePrRef(query) ? "No run for this PR yet. Review queues one." : "No run matches."}</Text> : null}
       {shown.map((group) => (
         <View key={group.state} style={{ gap: 6 }}>
           <View style={{ flexDirection: "row", alignItems: "center", gap: 8, minHeight: 28 }}>
@@ -243,7 +248,7 @@ export function InboxScreen({ theme, layout, navigation }: PluginScreenProps) {
           ))}
         </View>
       ))}
-      {hidden ? <Chip theme={theme} label={showSettled ? "Hide done, stale and skipped" : `Show done, stale and skipped (${hidden})`} onPress={() => setShowSettled(!showSettled)} style={{ alignSelf: "flex-start" }} /> : null}
+      {hidden && !query ? <Chip theme={theme} label={showSettled ? "Hide done, stale and skipped" : `Show done, stale and skipped (${hidden})`} onPress={() => setShowSettled(!showSettled)} style={{ alignSelf: "flex-start" }} /> : null}
     </ScrollView>
   );
 }

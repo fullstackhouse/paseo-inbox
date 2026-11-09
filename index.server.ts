@@ -15,7 +15,7 @@ import { ReviewStore } from "./server/reviews";
 import { addToConfigFile, findClone } from "./server/checkouts";
 import { configPath, dataDir, expandCheckouts, loadConfig, StateStore } from "./server/store";
 import { callTool, permissionAnswer, PREAPPROVED } from "./server/tools";
-import { addCheckout, addPr, findCheckout, isUnconfigured, listInbox, pollNow, runNow, skipRun, type Config } from "./shared/inbox";
+import { addCheckout, addPr, findCheckout, isUnconfigured, listInbox, pollNow, restoreRun, runNow, skipRun, type Config } from "./shared/inbox";
 import { inboxSettings, readLegacyConfig } from "./shared/settings";
 import { decideTrust } from "./shared/trust";
 import {
@@ -41,6 +41,7 @@ import {
   TOOLS,
   updateComment,
   updateReviewComment,
+  draftHeadline,
   type ReviewDraft,
 } from "./shared/review";
 
@@ -143,6 +144,7 @@ export default function contribute(server: PluginServerContext) {
       const draft = reviews.get(runId);
       return draft ? { posted: Boolean(draft.postedUrl) } : null;
     },
+    hasDraft: (runId) => reviews.has(runId),
     trust: (pr, config) => decideTrust(pr.author, config.trust, membership),
     announce: async (run, headline) => {
       if (!paseo || !run.agentId) return;
@@ -305,6 +307,13 @@ export default function contribute(server: PluginServerContext) {
     const agentId = inbox.run(runId)?.agentId;
     if (!agentId) throw new Error("This run has no reviewer agent");
     await api.agents.ref(agentId).send(message);
+    return { ok: true as const };
+  });
+  server.handle(restoreRun, ({ runId }, { paseo: api }) => {
+    capture(api);
+    const draft = reviews.get(runId);
+    if (!draft || draft.postedUrl) throw new Error(draft ? "This review was already posted" : "This run has no review draft");
+    inbox.restore(runId, `review drafted: ${draftHeadline(draft)}`);
     return { ok: true as const };
   });
   // The only paths from a review draft to GitHub: buttons on the review screen.

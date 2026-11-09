@@ -394,12 +394,16 @@ export const InboxViewSchema = z.object({
   errors: z.array(z.string()),
   /** Rules that draft reviews (`draftsReviews`), so a running row can open the review screen before its draft exists. */
   reviewRules: z.array(z.string()).optional(),
+  /** Settled runs (dismissed, stale, done) that still have a saved review draft, so they reopen it. */
+  drafts: z.array(z.string()).optional(),
 });
 export type InboxView = z.infer<typeof InboxViewSchema>;
 
 export const listInbox = defineRpc({ name: "inbox.list", input: z.object({}), output: InboxViewSchema });
 export const runNow = defineRpc({ name: "inbox.run_now", input: RunKeySchema, output: z.object({ ok: z.literal(true) }) });
 export const skipRun = defineRpc({ name: "inbox.skip", input: RunKeySchema, output: z.object({ ok: z.literal(true) }) });
+/** Undo a dismissal: a dismissed run with an unposted draft goes back to needs-decision. */
+export const restoreRun = defineRpc({ name: "inbox.restore", input: z.object({ runId: z.string() }), output: z.object({ ok: z.literal(true) }) });
 /** Queue a review for any PR by URL (or owner/repo#123), with the manual rule. */
 export const addPr = defineRpc({ name: "inbox.add_pr", input: z.object({ ref: z.string().min(1) }), output: z.object({ itemKey: z.string(), runId: z.string() }) });
 /** A local clone of `repo` the inbox found on disk (origin points at it), or null. */
@@ -422,8 +426,26 @@ export function groupRuns(runs: readonly Run[]): { state: RunState; runs: Run[] 
 }
 
 /** Rows that open the review screen: a drafted review, or a review rule's run that is still queued or drafting. */
-export const opensReview = (run: Run, view: Pick<InboxView, "reviewRules"> | null) =>
-  Boolean(run.reason?.startsWith("review ")) || ((run.state === "running" || run.state === "queued") && Boolean(view?.reviewRules?.includes(run.rule)));
+export const opensReview = (run: Run, view: Pick<InboxView, "reviewRules" | "drafts"> | null) =>
+  Boolean(run.reason?.startsWith("review ")) ||
+  Boolean(view?.drafts?.includes(run.id)) ||
+  ((run.state === "running" || run.state === "queued") && Boolean(view?.reviewRules?.includes(run.rule)));
+
+/** `https://github.com/o/r/pull/12` or `o/r#12` → repo and number. */
+export function parsePrRef(ref: string): { repo: string; number: number } | null {
+  const url = /github\.com\/([\w.-]+\/[\w.-]+)\/pull\/(\d+)/.exec(ref);
+  if (url) return { repo: url[1]!, number: Number(url[2]) };
+  const short = /^([\w.-]+\/[\w.-]+)#(\d+)$/.exec(ref.trim());
+  return short ? { repo: short[1]!, number: Number(short[2]) } : null;
+}
+
+/** A PR link or `owner/repo#N` matches that PR; otherwise every term appears in its key, title, author or labels, or the run's rule or reason. */
+export function matchesQuery(run: Run, pr: Pr | undefined, query: string): boolean {
+  const ref = parsePrRef(query);
+  if (ref) return run.itemKey === prKey(ref.repo, ref.number);
+  const haystack = [run.itemKey, run.rule, run.reason, pr?.title, pr?.author, ...(pr?.labels ?? [])].filter(Boolean).join(" ").toLowerCase();
+  return query.toLowerCase().split(/\s+/).filter(Boolean).every((term) => haystack.includes(term));
+}
 
 export const needsDecisionCount = (runs: readonly Run[]) =>
   groupRuns(runs).find((group) => group.state === "needs-decision")?.runs.length ?? 0;

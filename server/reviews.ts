@@ -18,6 +18,10 @@ export class ReviewStore {
     return parsed.success ? parsed.data : null;
   }
 
+  has(runId: string): boolean {
+    return existsSync(this.path(runId));
+  }
+
   save(draft: ReviewDraft): void {
     const path = this.path(draft.runId);
     writeFileSync(`${path}.tmp`, JSON.stringify(draft, null, 2));
