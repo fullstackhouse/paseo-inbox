@@ -2,7 +2,7 @@ import type { PluginScreenProps } from "@getpaseo/plugin/client";
 import { useRpc } from "@getpaseo/plugin/client";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Pressable, ScrollView, Text, View } from "react-native";
-import { addPr, DISMISSED, restoreRun, reviewRunFor, runNow, skipRun, type Run } from "../shared/inbox";
+import { addPr, DISMISSED, parsePrRef, restoreRun, reviewRunFor, runNow, skipRun, type Run } from "../shared/inbox";
 import {
   addReviewComment,
   deleteReviewComment,
@@ -320,6 +320,8 @@ export function ReviewScreen({ theme, layout, navigation, params }: PluginScreen
     );
   }
   if (!runId && prRef) {
+    const parsed = parsePrRef(prRef);
+    const prLabel = parsed ? `${parsed.repo}#${parsed.number}` : prRef;
     const start = async () => {
       setBusy("start");
       setError(null);
@@ -335,7 +337,7 @@ export function ReviewScreen({ theme, layout, navigation, params }: PluginScreen
     };
     return (
       <View style={{ flex: 1, padding: pad, gap: 12, alignItems: "flex-start", backgroundColor: theme.colors.surface0 }}>
-        <Text style={{ color: theme.colors.foreground, fontSize: 15, fontWeight: "600" }}>No review of {prRef} yet</Text>
+        <Text style={{ color: theme.colors.foreground, fontSize: 15, fontWeight: "600" }}>No review of {prLabel} yet</Text>
         <Text style={muted}>Start one and a reviewer drafts it here. You read and post it from this screen.</Text>
         <Chip theme={theme} active label={busy === "start" ? "Starting…" : "Start review"} disabled={busy === "start"} onPress={() => void start()} />
         {error ? <Text style={{ color: theme.colors.statusDanger, fontSize: 13 }}>{error}</Text> : null}
