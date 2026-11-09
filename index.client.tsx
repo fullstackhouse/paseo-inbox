@@ -9,6 +9,11 @@ import { REVIEW_SCREEN, ReviewScreen } from "./client/ReviewScreen";
 import { useInbox } from "./client/useInbox";
 import { needsDecisionCount } from "./shared/inbox";
 
+/** The FSH host's needs-input orange; older hosts only have the status warning. */
+function attentionColor(theme: PluginSidebarItemProps["theme"]): string {
+  return (theme.colors as { attention?: string }).attention ?? theme.colors.statusWarning;
+}
+
 function InboxItem({ currentScreen, openScreen, theme }: PluginSidebarItemProps) {
   const { view } = useInbox(60_000);
   const count = needsDecisionCount(view?.runs ?? []);
@@ -17,7 +22,7 @@ function InboxItem({ currentScreen, openScreen, theme }: PluginSidebarItemProps)
       icon="Inbox"
       active={currentScreen?.screenId === INBOX_SCREEN}
       onPress={() => openScreen({ screenId: INBOX_SCREEN })}
-      trailing={count ? <Text style={{ color: theme.colors.foregroundMuted, fontSize: 12 }}>{count}</Text> : null}
+      trailing={count ? <Text style={{ color: attentionColor(theme), fontSize: 12, fontWeight: "600" }}>{count}</Text> : null}
     />
   );
 }
