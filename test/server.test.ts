@@ -53,6 +53,17 @@ describe("Inbox", () => {
     expect(saved().runs[0]!.state).toBe("failed");
   });
 
+  it("tells the human when a turn ends without a draft, but not after a draft or a cancel", async () => {
+    const ended: string[] = [];
+    const { inbox } = harness({ review: [pr({ number: 1 }), pr({ number: 2 }), pr({ number: 3 })] }, { loadConfig: () => config({ maxConcurrent: 3 }), ended: async (run) => void ended.push(`${run.itemKey}:${run.state}`) });
+    await inbox.poll();
+    inbox.turnEnded("agent-1", { kind: "completed" });
+    inbox.turnEnded("agent-2", { kind: "canceled", reason: "stopped" });
+    inbox.markDrafted(inbox.runForAgent("agent-3")!.id, "review drafted: approve");
+    inbox.turnEnded("agent-3", { kind: "completed" });
+    expect(ended).toEqual(["acme/shop#1:needs-decision"]);
+  });
+
   it("reveals the run's workspace when a turn starts after the run's own", async () => {
     const revealed: string[] = [];
     const { inbox } = harness({ review: [pr()] }, { reveal: async (workspaceId) => void revealed.push(workspaceId) });
