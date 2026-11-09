@@ -26,6 +26,11 @@ export interface InboxDeps {
   trust?: (pr: Pr, config: Config) => Promise<{ trusted: boolean; because: string }>;
   /** Tells the reviewer agent's chat a draft is ready (the "Open review" card). */
   announce?: (run: Run, headline: string) => Promise<void>;
+  /**
+   * Tells the human a run's turn ended without a draft (completed or failed; not canceled). The
+   * agent's own "finished" notification is muted while its workspace is in the background.
+   */
+  ended?: (run: Run) => Promise<void>;
   /** Archives an inbox agent's workspace (and its worktree) once the human is done with it. */
   archive?: (workspaceId: string) => Promise<void>;
   /** The PR's review requests (GitHub timeline), for reopening a settled run when the human is asked again. */
@@ -196,6 +201,8 @@ export class Inbox {
         ? { state: "needs-decision" }
         : { state: "failed", reason: outcome.kind === "failed" ? outcome.error.message : `canceled: ${outcome.reason}` };
     this.commit(setRun(this.state, run.id, patch, this.now()));
+    const ended = this.state.runs.find((candidate) => candidate.id === run.id);
+    if (ended && outcome.kind !== "canceled") void this.deps.ended?.(ended).catch(() => undefined);
     void this.afterChange();
   }
 

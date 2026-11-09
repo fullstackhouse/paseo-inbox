@@ -51,22 +51,40 @@ export const PR_LABEL = "inbox.pr";
 const UNTRUSTED_ENV = "PASEO_INBOX_UNTRUSTED";
 export const REVIEW_CARD = "inbox-review";
 
-type Notifier = { notifications?: { send(input: { title: string; body: string; open?: { screen: string; params?: Record<string, string> }; key?: string }): Promise<unknown> } };
+type Notification = { title: string; body: string; open?: { screen: string; params?: Record<string, string> }; key?: string };
+type Notifier = { notifications?: { send(input: Notification): Promise<unknown> } };
 
-/**
- * "Review draft ready", opening the review screen. Only hosts with plugin notifications have
- * `paseo.notifications` (FSH Paseo); elsewhere the chat card is the only signal.
- */
-export async function notifyDraftReady(paseo: unknown, draft: { runId: string; pr: string; title: string; headline: string }): Promise<boolean> {
+/** Only hosts with plugin notifications have `paseo.notifications` (FSH Paseo); elsewhere this does nothing. */
+async function notify(paseo: unknown, input: Notification): Promise<boolean> {
   const notifications = (paseo as Notifier).notifications;
   if (typeof notifications?.send !== "function") return false;
-  await notifications.send({
-    title: `Review draft ready · ${draft.pr.replace(/^[^/]+\//, "")}`.slice(0, 120),
-    body: `${draft.title} — ${draft.headline}`.slice(0, 500),
+  await notifications.send({ ...input, title: input.title.slice(0, 120), body: input.body.slice(0, 500) });
+  return true;
+}
+
+const shortPr = (pr: string) => pr.replace(/^[^/]+\//, "");
+
+/** "Review draft ready", opening the review screen. Elsewhere the chat card is the only signal. */
+export function notifyDraftReady(paseo: unknown, draft: { runId: string; pr: string; title: string; headline: string }): Promise<boolean> {
+  return notify(paseo, {
+    title: `Review draft ready · ${shortPr(draft.pr)}`,
+    body: `${draft.title} — ${draft.headline}`,
     open: { screen: "review", params: { runId: draft.runId } },
     key: `draft:${draft.runId}`,
   });
-  return true;
+}
+
+/**
+ * A run's turn ended without a draft, opening the Inbox. Inbox agents run in background
+ * workspaces, whose own "finished" notification the daemon mutes, so this is the only signal.
+ */
+export function notifyRunEnded(paseo: unknown, run: { runId: string; pr: string; title: string; failed: boolean; reason?: string }): Promise<boolean> {
+  return notify(paseo, {
+    title: `${run.failed ? "Inbox run failed" : "Inbox run finished"} · ${shortPr(run.pr)}`,
+    body: `${run.title} — ${run.reason ?? "no review draft; open the Inbox to decide"}`,
+    open: { screen: "inbox" },
+    key: `ended:${run.runId}`,
+  });
 }
 
 export default function contribute(server: PluginServerContext) {
@@ -152,6 +170,11 @@ export default function contribute(server: PluginServerContext) {
       await paseo.agents.ref(run.agentId).timeline.append({ type: "plugin", id: REVIEW_CARD, kind: REVIEW_CARD, version: 1, data: { runId: run.id, headline, title: pr?.title ?? run.itemKey, pr: run.itemKey } });
       // Hosts with plugin notifications (FSH Paseo) also notify, and tapping opens the review itself.
       await notifyDraftReady(paseo, { runId: run.id, pr: run.itemKey, title: pr?.title ?? run.itemKey, headline }).catch((error) => console.error("notify failed", error));
+    },
+    ended: async (run) => {
+      if (!paseo) return;
+      const title = inbox.item(run.itemKey)?.pr.title ?? run.itemKey;
+      await notifyRunEnded(paseo, { runId: run.id, pr: run.itemKey, title, failed: run.state === "failed", reason: run.reason }).catch((error) => console.error("notify failed", error));
     },
     archive: async (workspaceId) => {
       await paseo?.workspaces.archive(workspaceId);
