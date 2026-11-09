@@ -70,6 +70,8 @@ Inbox agents get one MCP tool, `inbox_review_draft`. It takes a verdict, a confi
 - **Talking to the reviewer:** "Ask about this" sends the agent a quoted message and opens it. Its changes arrive through `inbox_review_revise`, which never touches comments you wrote or decided on.
 - **Posting:** pick the verdict (a hint warns when it disagrees with the blockers still standing), then post. The bottom bar's button names the verdict and posts in one click, with the inline comments you didn't drop. If the PR has new commits since the draft, Post is refused until you move the comments or re-draft (below).
 
+**Opening a review from a workspace.** paseo-prs' **Review** button on a PR row opens this screen for that PR. Other plugins can do the same with `navigation.openPluginScreen({ pluginId: "paseo-inbox", screenId: "review", params: { pr } })`, where `pr` is a PR link or `owner/repo#N` (needs a Paseo host with `openPluginScreen`, the FSH build). It shows the PR's newest review, or **Start review**, which queues one as pasting the link would.
+
 ## Re-reviews
 
 - **Comments follow the code.** When a PR gets new commits after a draft, **Move comments to the new head** finds each comment's line again by its exact text in the new diff, using up to three neighbouring lines to tell repeated lines apart. No AI runs, and your keep/edit/drop and grade choices stay. A comment whose line changed is marked *drifted* and goes into the review body, quoting the code it was about. The summary, chapters and verdict stay as written; the screen and the posted body say which commit they were written for. Post then sends the new head as the review's commit. **Re-draft at the new head** is still there for a fresh review.
