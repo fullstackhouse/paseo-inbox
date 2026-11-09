@@ -1,4 +1,4 @@
-import { DISMISSED, latestRound, modeFor, moveRun, noCheckoutReason, plan, renderPrompt, providerFor, reopen, reopenable, requeue, runId, setRun, startable, type Config, type InboxView, type Pr, type Run, type State } from "../shared/inbox";
+import { DISMISSED, draftsReviews, latestRound, modeFor, moveRun, noCheckoutReason, plan, renderPrompt, providerFor, reopen, reopenable, requeue, runId, setRun, startable, type Config, type InboxView, type Pr, type Run, type State } from "../shared/inbox";
 import { askedAgain, type ReviewRequest } from "../shared/rereview";
 
 /** At most this many "asked again?" timeline reads per poll. */
@@ -60,7 +60,16 @@ export class Inbox {
   }
 
   view(): InboxView {
-    return { items: this.state.items, runs: this.state.runs, lastPollAt: this.lastPollAt, errors: this.errors };
+    return { items: this.state.items, runs: this.state.runs, lastPollAt: this.lastPollAt, errors: this.errors, reviewRules: this.reviewRules() };
+  }
+
+  /** An invalid config already shows in `errors`; it just means no row opens the review screen early. */
+  private reviewRules(): string[] {
+    try {
+      return this.deps.loadConfig()?.rules.filter(draftsReviews).map((rule) => rule.name) ?? [];
+    } catch {
+      return [];
+    }
   }
 
   isInboxAgent(agentId: string): boolean {

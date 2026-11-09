@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ConfigSchema, DISMISSED, globToRegExp, groupRuns, mismatch, needsDecisionCount, plan, renderPrompt, requeue, runId, setRun, startable } from "../shared/inbox";
+import { ConfigSchema, DISMISSED, draftsReviews, globToRegExp, groupRuns, mismatch, needsDecisionCount, opensReview, plan, renderPrompt, requeue, runId, setRun, startable, type Run } from "../shared/inbox";
 import { config, emptyState, later, NOW, pr } from "./fixtures";
 
 const states = (state: ReturnType<typeof plan>) => state.runs.map((run) => [run.rule, run.version, run.state]);
@@ -185,5 +185,26 @@ describe("groupRuns", () => {
       ["queued", ["acme/shop#7"]],
     ]);
     expect(needsDecisionCount(state.runs)).toBe(1);
+  });
+});
+
+describe("opensReview", () => {
+  const view = { reviewRules: config().rules.filter(draftsReviews).map((rule) => rule.name) };
+  const at = (state: Run["state"], rule = "draft-review", reason?: string): Run => ({ id: "r", itemKey: "o/r#1", source: "review", rule, version: "a", state, reason, updatedAt: NOW });
+
+  it("knows which rules draft reviews", () => {
+    expect(view.reviewRules).toEqual(["draft-review"]);
+  });
+
+  it("opens a review rule's run while it is queued or drafting", () => {
+    expect(opensReview(at("running"), view)).toBe(true);
+    expect(opensReview(at("queued"), view)).toBe(true);
+    expect(opensReview(at("running", "qa"), view)).toBe(false);
+    expect(opensReview(at("running"), null)).toBe(false);
+  });
+
+  it("opens a drafted review, and not a finished run that never drafted one", () => {
+    expect(opensReview(at("needs-decision", "draft-review", "review drafted: approve · 90%"), view)).toBe(true);
+    expect(opensReview(at("needs-decision", "draft-review", "turn ended without a draft"), view)).toBe(false);
   });
 });

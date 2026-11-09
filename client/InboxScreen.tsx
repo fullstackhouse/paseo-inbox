@@ -2,7 +2,7 @@ import type { PluginScreenProps } from "@getpaseo/plugin/client";
 import { useRpc, useSettings } from "@getpaseo/plugin/client";
 import { useEffect, useMemo, useState } from "react";
 import { Pressable, ScrollView, Text, TextInput, View } from "react-native";
-import { addCheckout, addPr, findCheckout, groupRuns, isUnconfigured, runNow, skipRun, type Run, type RunState } from "../shared/inbox";
+import { addCheckout, addPr, findCheckout, groupRuns, isUnconfigured, opensReview, runNow, skipRun, type Run, type RunState } from "../shared/inbox";
 import { postReview } from "../shared/review";
 import { inboxSettings } from "../shared/settings";
 import { openScreen } from "./nav";
@@ -140,11 +140,11 @@ export function InboxScreen({ theme, layout, navigation }: PluginScreenProps) {
     const draft = drafted(run);
     const key = `${run.itemKey}|${run.rule}`;
     const open = () => {
-      if (draft || run.reason?.startsWith("review ")) openScreen({ screenId: REVIEW_SCREEN, params: { runId: run.id } });
+      if (draft || opensReview(run, view)) openScreen({ screenId: REVIEW_SCREEN, params: { runId: run.id } });
       else if (run.agentId && navigation) navigation.openAgent({ agentId: run.agentId });
       else if (pr) openUrl(pr.url);
     };
-    const tappable = Boolean(draft || run.reason?.startsWith("review ") || (run.agentId && navigation) || pr);
+    const tappable = Boolean(draft || opensReview(run, view) || (run.agentId && navigation) || pr);
     const clone = run.state === "no-checkout" && pr ? clones[pr.repo] : undefined;
     const detail = draft ? draft.detail : clone ? `Found a clone at ${clone}` : run.state === "no-checkout" && pr ? `No clone of ${pr.repo} on this machine. Add one under Settings → Inbox → Repos on this machine.` : (run.reason ?? run.rule);
     const checked = picked.has(run.id);
