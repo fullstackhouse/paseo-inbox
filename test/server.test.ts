@@ -122,6 +122,12 @@ describe("Inbox", () => {
     expect(started).toHaveLength(1);
   });
 
+  it("lists the rules that draft reviews, and none for an invalid config", () => {
+    expect(harness({}).inbox.view().reviewRules).toEqual(["draft-review"]);
+    const invalid = harness({}, { loadConfig: () => { throw new Error("bad"); } });
+    expect(invalid.inbox.view().reviewRules).toEqual([]);
+  });
+
   it("explains a missing or invalid config", async () => {
     const missing = harness({}, { loadConfig: () => null });
     await missing.inbox.poll();

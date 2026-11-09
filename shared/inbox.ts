@@ -1,5 +1,6 @@
 import { defineRpc } from "@getpaseo/plugin";
 import { z } from "zod";
+import { REVIEW_TOOL } from "./review";
 
 // ---------- Config (~/.paseo/inbox.json) ----------
 
@@ -20,6 +21,9 @@ export const RuleSchema = z.object({
   mode: z.string().optional(),
 });
 export type Rule = z.infer<typeof RuleSchema>;
+
+/** A rule whose prompt asks for a review: its runs open the review screen while they're still drafting. */
+export const draftsReviews = (rule: Rule) => /review/i.test(rule.prompt) || rule.prompt.includes(REVIEW_TOOL);
 
 /** Paseo needs `provider/model`; `paseo provider models <provider>` lists the model ids. */
 const ProviderSchema = z.string().regex(/^[\w-]+\/\S+$/, 'use "provider/model", e.g. "claude/claude-opus-5-5" (see `paseo provider models claude`)');
@@ -388,6 +392,8 @@ export const InboxViewSchema = z.object({
   runs: z.array(RunSchema),
   lastPollAt: z.string().nullable(),
   errors: z.array(z.string()),
+  /** Rules that draft reviews (`draftsReviews`), so a running row can open the review screen before its draft exists. */
+  reviewRules: z.array(z.string()).optional(),
 });
 export type InboxView = z.infer<typeof InboxViewSchema>;
 
@@ -414,6 +420,10 @@ export function groupRuns(runs: readonly Run[]): { state: RunState; runs: Run[] 
     runs: [...latest.values()].filter((run) => run.state === state).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
   })).filter((group) => group.runs.length);
 }
+
+/** Rows that open the review screen: a drafted review, or a review rule's run that is still queued or drafting. */
+export const opensReview = (run: Run, view: Pick<InboxView, "reviewRules"> | null) =>
+  Boolean(run.reason?.startsWith("review ")) || ((run.state === "running" || run.state === "queued") && Boolean(view?.reviewRules?.includes(run.rule)));
 
 export const needsDecisionCount = (runs: readonly Run[]) =>
   groupRuns(runs).find((group) => group.state === "needs-decision")?.runs.length ?? 0;

@@ -313,6 +313,8 @@ export function ReviewScreen({ theme, layout, navigation, params }: PluginScreen
     );
   }
 
+  // Opened from a running row: the screen fills in when the reviewer saves its draft (the run's updatedAt moves, so the draft is re-read).
+  const drafting = !draft && (run.state === "running" || run.state === "queued");
   const live = draft?.comments.filter((comment) => comment.status !== "dropped") ?? [];
   const folded = live.filter((comment) => details && placement(comment, files) !== "inline").length;
   const verdict = draft ? effectiveVerdict(draft) : null;
@@ -419,6 +421,7 @@ export function ReviewScreen({ theme, layout, navigation, params }: PluginScreen
                 {verdict} · {draft.confidence}%{draft.verdictOverride ? " (yours)" : ""}
               </Pill>
             ) : null}
+            {drafting ? <Pill theme={theme} color={theme.colors.foregroundMuted}>{run.state === "queued" ? "queued" : "drafting…"}</Pill> : null}
             {stale ? <Pill theme={theme} color={theme.colors.statusWarning}>new commits since this draft</Pill> : null}
             {draft?.reviewedVersion && draft.reviewedVersion !== draft.version ? <Pill theme={theme} color={theme.colors.foregroundMuted}>summary written for {draft.reviewedVersion.slice(0, 7)}</Pill> : null}
             {draft?.postedUrl ? <Pill theme={theme} color={theme.colors.statusSuccess}>posted</Pill> : null}
@@ -452,7 +455,25 @@ export function ReviewScreen({ theme, layout, navigation, params }: PluginScreen
 
         {/* Content */}
         <View onLayout={(event) => (contentY.current = event.nativeEvent.layout.y)} style={{ paddingHorizontal: pad, paddingTop: 14, gap: 12, width: "100%", maxWidth, alignSelf: "center" }}>
-          {!draft && tab !== "description" && tab !== "files" ? <Text style={muted}>No review draft for this run yet.</Text> : null}
+          {!draft && tab !== "description" && tab !== "files" ? (
+            drafting ? (
+              <View style={{ gap: 10, alignItems: "flex-start", backgroundColor: theme.colors.surface1, borderRadius: 10, padding: 14 }}>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+                  <ActivityIndicator color={theme.colors.foregroundMuted} />
+                  <Text style={{ color: theme.colors.foreground, fontSize: 14, fontWeight: "600" }}>{run.state === "queued" ? "Waiting for a free slot" : "The reviewer is drafting this review"}</Text>
+                </View>
+                <Text style={muted}>
+                  The summary, verdict and comments appear here when the draft is saved{run.state === "running" ? ` (started ${ago(run.updatedAt)} ago)` : ""}. Read the Files and Description in the meantime.
+                </Text>
+                <View style={{ flexDirection: "row", gap: 8 }}>
+                  <Chip theme={theme} label="Files" style={small} textStyle={{ fontSize: 12 }} onPress={() => setTab("files")} />
+                  {run.agentId && navigation ? <Chip theme={theme} label="Watch the reviewer" style={small} textStyle={{ fontSize: 12 }} onPress={() => navigation.openAgent({ agentId: run.agentId! })} /> : null}
+                </View>
+              </View>
+            ) : (
+              <Text style={muted}>No review draft for this run yet.</Text>
+            )
+          ) : null}
 
           {tab === "summary" && draft ? (
             <>
