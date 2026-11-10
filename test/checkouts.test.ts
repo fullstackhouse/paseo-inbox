@@ -2,6 +2,7 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { prWorktree } from "../index.server";
 import { addToConfigFile, findClone } from "../server/checkouts";
 
 function clone(dir: string, url: string) {
@@ -53,5 +54,11 @@ describe("addToConfigFile", () => {
     const file = join(home, "inbox.json");
     writeFileSync(file, "{}");
     expect(() => addToConfigFile(file, "acme/api", "~/nowhere", home)).toThrow("isn't a git clone");
+  });
+});
+
+describe("prWorktree", () => {
+  it("names the PR's repo, so a clone's upstream remote can't redirect the checkout", () => {
+    expect(prWorktree({ repo: "acme/shop", number: 7 })).toEqual({ mode: "checkout-pr", prNumber: 7, projectPath: "acme/shop" });
   });
 });
