@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ConfigSchema, DISMISSED, draftsReviews, globToRegExp, groupRuns, matchesQuery, mismatch, needsDecisionCount, opensReview, plan, renderPrompt, requeue, reviewRunFor, runId, setRun, startable, type Run } from "../shared/inbox";
+import { ConfigSchema, DISMISSED, draftsReviews, globToRegExp, groupRuns, matchesQuery, mismatch, needsDecisionCount, opensReview, plan, renderPrompt, requeue, reviewPill, reviewRunFor, runId, setRun, startable, type Run } from "../shared/inbox";
 import { config, emptyState, later, NOW, pr } from "./fixtures";
 
 const states = (state: ReturnType<typeof plan>) => state.runs.map((run) => [run.rule, run.version, run.state]);
@@ -225,6 +225,37 @@ describe("opensReview", () => {
   it("opens a dismissed run whose draft is still saved", () => {
     expect(opensReview(at("done", "draft-review", DISMISSED), view)).toBe(false);
     expect(opensReview(at("done", "draft-review", DISMISSED), { ...view, drafts: ["r"] })).toBe(true);
+  });
+});
+
+describe("reviewPill", () => {
+  const run = (id: string, patch: Partial<Run>): Run => ({ id, itemKey: "o/r#1", source: "review", rule: "draft-review", version: "a", state: "needs-decision", agentId: "agent", workspaceId: "w", updatedAt: NOW, ...patch });
+
+  it("shows the drafted verdict, then that the review was posted", () => {
+    expect(reviewPill([run("r", { reason: "review drafted: request-changes · 70% · 1 blocker" })], null, "agent")).toEqual({ runId: "r", label: "Review · request-changes" });
+    expect(reviewPill([run("r", { state: "done", reason: "review posted: https://x" })], null, "agent")).toEqual({ runId: "r", label: "Review posted" });
+  });
+
+  it("has no pill while drafting, or for a run that ended without a draft", () => {
+    expect(reviewPill([run("r", { state: "running" })], null, "agent")).toBeNull();
+    expect(reviewPill([run("r", { reason: "turn ended without a draft" })], null, "agent")).toBeNull();
+    expect(reviewPill([run("r", { reason: "review drafted: approve · 90%" })], null, "someone-else")).toBeNull();
+  });
+
+  it("opens a dismissed draft that is still saved", () => {
+    const dismissed = run("r", { state: "done", reason: DISMISSED });
+    expect(reviewPill([dismissed], { drafts: [] }, "agent")).toBeNull();
+    expect(reviewPill([dismissed], { drafts: ["r"] }, "agent")).toEqual({ runId: "r", label: "Review" });
+  });
+
+  it("comes back with the unposted draft when the review is requested again", () => {
+    expect(reviewPill([run("r", { reason: "review requested again by @dana: your draft is back" })], null, "agent")).toEqual({ runId: "r", label: "Review" });
+    expect(reviewPill([run("r", { state: "queued", reason: "review requested again by @dana" })], null, "agent")).toBeNull();
+  });
+
+  it("follows the agent's latest run when its review moved to a new head", () => {
+    const runs = [run("old", { state: "done", reason: "comments moved to bbbbbbb" }), run("new", { reason: "review moved to bbbbbbb from aaaaaaa" })];
+    expect(reviewPill(runs, null, "agent")).toEqual({ runId: "new", label: "Review" });
   });
 });
 

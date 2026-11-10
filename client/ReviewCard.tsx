@@ -8,8 +8,8 @@ export const REVIEW_CARD = "inbox-review";
 export const ReviewCardSchema = z.object({ runId: z.string(), headline: z.string(), title: z.string(), pr: z.string() });
 
 /**
- * The row the inbox appends to a reviewer's chat when its draft is ready. Paseo's "agent finished"
- * notification opens this chat, so the review is one tap away.
+ * The row the inbox used to append to a reviewer's chat when its draft was ready. New drafts get a
+ * composer pill (`reviewPills.ts`); this keeps the cards already in older chats rendering.
  */
 export function ReviewCard({ item, theme }: PluginTimelineItemProps<z.infer<typeof ReviewCardSchema>>) {
   const data = item.data;

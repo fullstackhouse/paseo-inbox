@@ -4,6 +4,7 @@ import { Text } from "react-native";
 import { INBOX_SCREEN, InboxScreen } from "./client/InboxScreen";
 import { setOpenScreen } from "./client/nav";
 import { REVIEW_CARD, ReviewCard, ReviewCardSchema } from "./client/ReviewCard";
+import { contributeReviewPills } from "./client/reviewPills";
 import { InboxSettings } from "./client/SettingsScreen";
 import { REVIEW_SCREEN, ReviewScreen } from "./client/ReviewScreen";
 import { observeSnoozedWorkspaces, useSnoozedWorkspaceIds } from "./client/snoozed";
@@ -34,8 +35,14 @@ export default function contribute(client: PluginClientContext) {
   client.addScreen({ id: INBOX_SCREEN, title: "Inbox", Component: InboxScreen });
   client.addScreen({ id: REVIEW_SCREEN, title: "Review", Component: ReviewScreen });
   client.addSettingsScreen({ id: "inbox", title: "Inbox", icon: "Inbox", Component: InboxSettings });
+  // Older chats still hold the "Review draft ready" card; new drafts get a composer pill instead.
   client.addTimelineRenderer({ kind: REVIEW_CARD, version: 1, schema: ReviewCardSchema, Component: ReviewCard });
   client.addCommandCenterItem({ id: "settings", title: "Inbox settings", icon: "Settings", context: "global", onSelect: ({ openSettings }) => openSettings("inbox") });
   client.addSidebarHeaderItem({ id: INBOX_SCREEN, title: "Inbox", Component: InboxItem });
-  return observeSnoozedWorkspaces(client, "inbox");
+  const stopPills = contributeReviewPills(client);
+  const stopSnoozed = observeSnoozedWorkspaces(client, "inbox");
+  return () => {
+    stopPills();
+    stopSnoozed();
+  };
 }

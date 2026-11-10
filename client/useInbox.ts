@@ -5,15 +5,15 @@ import { listInbox, pollNow, type InboxView } from "../shared/inbox";
 // One view shared by every useInbox caller, so an action on one screen updates the sidebar count at once.
 let shared: InboxView | null = null;
 const listeners = new Set<() => void>();
-const publish = (view: InboxView) => {
+export const publish = (view: InboxView) => {
   shared = view;
   for (const listener of listeners) listener();
 };
-const subscribe = (listener: () => void) => {
+export const subscribe = (listener: () => void) => {
   listeners.add(listener);
   return () => listeners.delete(listener);
 };
-const snapshot = () => shared;
+export const snapshot = () => shared;
 
 /** The daemon's inbox view, refreshed every `everyMs` and whenever any other caller refreshes it. */
 export function useInbox(everyMs = 15_000) {
