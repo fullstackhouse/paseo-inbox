@@ -49,7 +49,6 @@ export const RUN_LABEL = "inbox.run";
 export const PR_LABEL = "inbox.pr";
 /** Env marker on a session the inbox started read-only (its PR's author isn't trusted). */
 const UNTRUSTED_ENV = "PASEO_INBOX_UNTRUSTED";
-export const REVIEW_CARD = "inbox-review";
 
 type Notification = { title: string; body: string; open?: { screen: string; params?: Record<string, string> }; key?: string };
 type Notifier = { notifications?: { send(input: Notification): Promise<unknown> } };
@@ -167,8 +166,7 @@ export default function contribute(server: PluginServerContext) {
     announce: async (run, headline) => {
       if (!paseo || !run.agentId) return;
       const pr = inbox.item(run.itemKey)?.pr;
-      await paseo.agents.ref(run.agentId).timeline.append({ type: "plugin", id: REVIEW_CARD, kind: REVIEW_CARD, version: 1, data: { runId: run.id, headline, title: pr?.title ?? run.itemKey, pr: run.itemKey } });
-      // Hosts with plugin notifications (FSH Paseo) also notify, and tapping opens the review itself.
+      // The chat's composer pill opens the review; hosts with plugin notifications (FSH Paseo) also notify, and tapping opens it too.
       await notifyDraftReady(paseo, { runId: run.id, pr: run.itemKey, title: pr?.title ?? run.itemKey, headline }).catch((error) => console.error("notify failed", error));
     },
     ended: async (run) => {

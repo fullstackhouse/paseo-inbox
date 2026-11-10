@@ -442,6 +442,20 @@ export function reviewRunFor(runs: readonly Run[], view: Pick<InboxView, "review
   return runs.filter((run) => run.itemKey === key && opensReview(run, view)).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0] ?? null;
 }
 
+/**
+ * The composer pill on an inbox agent's chat, or null while its run has no draft to open. The agent's
+ * latest run counts: a review moved to a new head keeps the agent.
+ */
+export function reviewPill(runs: readonly Run[], view: Pick<InboxView, "drafts"> | null, agentId: string): { runId: string; label: string } | null {
+  const run = [...runs].reverse().find((candidate) => candidate.agentId === agentId);
+  if (!run) return null;
+  const verdict = /^review drafted: (\S+)/.exec(run.reason ?? "")?.[1];
+  if (verdict) return { runId: run.id, label: `Review · ${verdict}` };
+  if (run.reason?.startsWith("review posted")) return { runId: run.id, label: "Review posted" };
+  if (run.reason?.startsWith("review moved") || view?.drafts?.includes(run.id)) return { runId: run.id, label: "Review" };
+  return null;
+}
+
 /** `https://github.com/o/r/pull/12` or `o/r#12` → repo and number. */
 export function parsePrRef(ref: string): { repo: string; number: number } | null {
   const url = /github\.com\/([\w.-]+\/[\w.-]+)\/pull\/(\d+)/.exec(ref);
