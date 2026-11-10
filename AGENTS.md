@@ -1,17 +1,16 @@
 # paseo-inbox
 
-Paseo plugin: GitHub PR searches → rules → one agent per match, with a PATH guard that blocks GitHub writes from those agents. Design: SPEC-048 in `fullstackhouse/fsh-monorepo`.
+Paseo plugin: GitHub PR searches → rules → one agent per match. Untrusted authors' PRs get read-only runs without credentials. Design: SPEC-048 in `fullstackhouse/fsh-monorepo`.
 
 ## Layout
 
 - `shared/inbox.ts`: config/state Zod schemas, RPCs (`inbox.list`, `inbox.run_now`, `inbox.skip`, `inbox.poll_now`; names must match `^[a-z][a-z0-9._-]*$`), and the pure core: `mismatch` (rule filters), `plan` (poll results + state → next state: stale older versions, queue/skip/no-checkout new ones, re-decide never-started runs at the same SHA, forget items unseen 7 days), `startable`, `requeue`, `renderPrompt` (+ no-writes preamble), `groupRuns`. Test logic here.
 - `server/inbox.ts`: `Inbox` loop over injected deps (config, search, start, store, archive, ready): poll → plan → dispatch within `maxConcurrent`; `turnEnded`/`agentGone` move runs on; runs still `running` at startup become `needs-decision`.
 - `server/github.ts`: `GithubSource` (`gh search prs` + `gh pr view` details cached by URL + `updatedAt`), `summarizeChecks`, `queryArgs`.
-- `server/guard.ts`: `GUARD_JS` (standalone Node script, the exact file the tests execute), `installShims` (`gh`/`git` → guard), `guardEnv` (shim dir first on PATH for marked sessions).
 - `shared/review.ts` + `server/{tools,reviews,post,bridge,listener}.ts`: review drafts. `inbox_review_draft` MCP tool, injected in `before("agent.create")` only for sessions with `PASEO_INBOX_RUN`, via the stdio bridge copied from paseo-prs. It saves a `ReviewDraft` per run and moves the run to needs-decision. `postDraft` (RPC `inbox.review_post`, called only by the card's Post button) posts with `gh api … /reviews --input -` from the plugin process, refusing stale or already-posted drafts. `client/ReviewDraftView.tsx` renders it on the card.
 - `server/checkouts.ts`: `findClone` (RPC `inbox.checkout_find`; a folder named like the repo whose `.git/config` remote points at it, beside configured checkouts or under `~/src`-style folders) and `addToConfigFile` (RPC `inbox.checkout_add`, legacy inbox.json only; with settings in use the client saves them). `plan` queues any no-checkout run whose repo now has a checkout.
 - `server/store.ts`: `~/.paseo/inbox.json` loader (`~` expanded), `StateStore` (atomic JSON).
-- `index.server.ts`: timer, `agents.create` (`worktree: checkout-pr`, `background`, labels `inbox.run`/`inbox.pr`, env `PASEO_INBOX_RUN`), `before("agent.session_open")` applies the guard, `turn_ended`/`closed`/`archived` hooks, RPCs.
+- `index.server.ts`: timer, `agents.create` (`worktree: checkout-pr`, `background`, labels `inbox.run`/`inbox.pr`, env `PASEO_INBOX_RUN`), `before("agent.session_open")` strips credentials from untrusted runs, `turn_ended`/`closed`/`archived` hooks, RPCs.
 - Reading: `shared/highlight.ts` (small tokenizer, per diff line, block comments carried across lines), `shared/markdown.ts` (`addedText` for added files). An added `.md` file opens as a document with comments under their paragraphs. Viewed marks live on the draft as `viewed[path] = patchPrint(patch)`, so a changed patch unticks.
 - Review screen: `client/ReviewScreen.tsx` (header, sticky tabs, post bar, prev/next via `reviewQueue`), `FileDiff` (`shared/diff.ts` `parsePatch` + `anchors`), `CommentCard` (keep/edit/drop through RPC `inbox.review_comment` → `updateComment`), `Markdown` (Paseo’s shared `@getpaseo/plugin/client/ui` renderer). PR body and file patches come from RPC `inbox.pr_get` → `PrDetailsCache` (`gh api pulls/N` + `/files --paginate --slurp`, cached per head SHA). Screens get no `openScreen` prop, so `client/nav.ts` holds the client's.
 - Search and dismissed drafts: the link field doubles as search (`matchesQuery`; a PR link matches that PR, so settled runs show too). `view().drafts` lists settled runs whose draft is still on disk (`hasDraft`), so `opensReview` opens them; RPC `inbox.restore` (`Inbox.restore`) undoes Dismiss for an unposted draft.
@@ -28,9 +27,8 @@ Render Markdown through `@getpaseo/plugin/client/ui`. Use `afterBlock` source ra
 ## Load-bearing facts (Paseo 0.12)
 
 - The plugin has no `paseo` handle until a hook or RPC hands one over; polling runs without it, dispatch waits (`ready`).
-- `process.execPath` in the desktop app is the Electron helper: the shims run it with `ELECTRON_RUN_AS_NODE=1`, and the guard strips that before spawning the real tool.
-- `ToolPolicy` has no deny list, and a permission hook only fires in asking modes; hence the PATH guard, and agents run in `mode` (default `auto`) so they never stall on a prompt.
-- An ask's Send prompts the same guarded agent, so it can't perform the write. Writes go through a plugin RPC behind a UI button.
+- A permission hook only fires in asking modes: trusted runs use `mode` (default `auto`) so they never stall on a prompt; untrusted runs use `default` so the hook can gate every tool.
+- No PATH guard: in trusted runs it was bypassable (auto mode + real `gh` login) and it blocked writes the human asked for via an ask's Send. Reviews still post through a plugin RPC behind the Post button.
 - A GitHub rate limit on agent start keeps the run queued. The daemon's checkout-pr GraphQL call is the first thing to hit the limit.
 - `checkout-pr` makes a new worktree per run (`<branch>-N`); Dismiss archives them via `paseo.workspaces.archive`.
 - `checkout-pr` gets `projectPath: pr.repo` (`prWorktree`). Without it the daemon resolves the repo with `gh repo view`, which prefers an `upstream` remote, so a clone whose `upstream` is another project looks the PR up there. SDK 0.15.3's type lacks the field; FSH Paseo reads it.

@@ -133,7 +133,7 @@ export function ghWithInput(args: string[], input: string): Promise<string> {
   });
 }
 
-/** Posts a review on `owner/repo#number`; returns its URL. The plugin process isn't behind the agent write guard. */
+/** Posts a review on `owner/repo#number`; returns its URL. */
 export async function postPullReview(repo: string, number: number, payload: unknown, run: (args: string[], input: string) => Promise<string> = ghWithInput): Promise<string> {
   const out = await run(["api", "--method", "POST", `repos/${repo}/pulls/${number}/reviews`, "--input", "-"], JSON.stringify(payload));
   return z.object({ html_url: z.string() }).parse(JSON.parse(out)).html_url;

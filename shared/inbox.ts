@@ -34,7 +34,7 @@ export const ConfigSchema = z.object({
   provider: ProviderSchema.default("claude/claude-opus-5-5"),
   /**
    * Inbox agents run unattended, so they need a mode that doesn't stop on permission prompts.
-   * GitHub writes stay blocked by the PATH guard whatever the mode. `auto` is Claude's; set Codex's own id.
+   * `auto` is Claude's; set Codex's own id.
    */
   mode: z.string().default("auto"),
   checkouts: z.record(z.string(), z.string()).default({}),
@@ -364,9 +364,9 @@ export function moveRun(state: State, fromId: string, version: string, now: stri
 export function preamble(pr: Pr): string {
   return [
     `You were started by paseo-inbox for ${pr.url} at ${pr.headSha}.`,
-    "Do not write to GitHub: no comments, reviews, labels, pushes or merges. Those commands are blocked for you.",
-    "If you were asked for a review, save it with inbox_review_draft; the human posts it from the Inbox.",
-    "Otherwise end by creating one ask with your result and the exact write you propose, so the human can act on it.",
+    "Do not post to this PR until the human tells you to (a Send click on your ask counts): no reviews, comments, labels, pushes to its branch or merges.",
+    "If you were asked for a review, save it with inbox_review_draft; the human posts it with Post.",
+    "Otherwise end by creating one ask with your result and a Send action for each write to this PR you propose.",
   ].join(" ");
 }
 
