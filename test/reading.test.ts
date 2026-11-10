@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { highlightLine, languageFor } from "../shared/highlight";
-import { addedText, isMarkdownPath, parseMarkdown } from "../shared/markdown";
+import { addedText, isMarkdownPath } from "../shared/markdown";
 import { isViewed, patchPrint } from "../shared/review";
 
 describe("highlightLine", () => {
@@ -36,21 +36,6 @@ describe("highlightLine", () => {
 });
 
 describe("markdown documents", () => {
-  it("parses tables and keeps source line numbers, HTML comments included", () => {
-    const blocks = parseMarkdown(["# Title", "<!--", "hidden", "-->", "Intro", "", "| a | b |", "|---|:-:|", "| 1 | `x\\|y` |", "", "- item"].join("\n"));
-    expect(blocks.map((block) => [block.kind, block.line])).toEqual([
-      ["heading", 1],
-      ["paragraph", 5],
-      ["table", 7],
-      ["list", 11],
-    ]);
-    const table = blocks[2] as Extract<(typeof blocks)[number], { kind: "table" }>;
-    expect(table.header.map((cell) => cell[0])).toEqual([{ kind: "text", text: "a" }, { kind: "text", text: "b" }]);
-    expect(table.rows[0]![1]).toEqual([{ kind: "code", text: "x|y" }]);
-  });
-  it("renders images as links", () => {
-    expect(parseMarkdown("![shot](https://x/y.png)")[0]).toMatchObject({ inlines: [{ kind: "link", text: "🖼 shot", url: "https://x/y.png" }] });
-  });
   it("rebuilds an added file's text from its patch, and only for added files", () => {
     expect(addedText("@@ -0,0 +1,2 @@\n+# Hi\n+there")).toBe("# Hi\nthere");
     expect(addedText("@@ -1,2 +1,2 @@\n a\n+b")).toBeNull();

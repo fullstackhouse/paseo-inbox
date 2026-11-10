@@ -171,8 +171,8 @@ export function FileDiff({
                 theme={theme}
                 size={14}
                 empty="Empty file."
-                after={(block, next) => {
-                  const here = comments.filter((comment) => comment.line !== null && !comment.drifted && comment.line >= block.line && (!next || comment.line < next.line));
+                afterBlock={({ startLine, endLine }) => {
+                  const here = comments.filter((comment) => comment.line !== null && !comment.drifted && comment.line >= startLine && comment.line <= endLine);
                   return here.length ? <View style={{ gap: 8 }}>{here.map((comment) => card(comment, "inline"))}</View> : null;
                 }}
               />
