@@ -7,7 +7,6 @@ import { join } from "node:path";
 import { compareCommits, ghWithInput, GithubMembership, GithubSource, latestReviewBy, postPullReview, PrDetailsCache, reviewRequests, whoami } from "./server/github";
 import { filesAt, reanchorRun, sinceRun } from "./server/rereview";
 import { reanchorReview, reviewSince } from "./shared/rereview";
-import { guardEnv, installShims, RUN_ENV } from "./server/guard";
 import { Inbox, type StartRequest } from "./server/inbox";
 import { listen } from "./server/listener";
 import { handoffDraft, postDraft, previewDraft } from "./server/post";
@@ -47,6 +46,8 @@ import {
 
 export const RUN_LABEL = "inbox.run";
 export const PR_LABEL = "inbox.pr";
+/** Env var marking a session as inbox-started; its value is the run id. */
+export const RUN_ENV = "PASEO_INBOX_RUN";
 /** Env marker on a session the inbox started read-only (its PR's author isn't trusted). */
 const UNTRUSTED_ENV = "PASEO_INBOX_UNTRUSTED";
 
@@ -97,7 +98,6 @@ export function prWorktree(pr: { repo: string; number: number }): { mode: "check
 
 export default function contribute(server: PluginServerContext) {
   const dir = dataDir();
-  const shimDir = installShims(dir);
   const store = new StateStore(dir);
   const reviews = new ReviewStore(dir);
   const mcp = installBridge(dir);
@@ -214,35 +214,30 @@ export default function contribute(server: PluginServerContext) {
     });
   });
 
-  // The write guard: inbox agents get `gh`/`git` shims first on PATH, on create and on every resume.
+  // Credential hygiene for read-only runs (Cerber §14.3), not a sandbox: no gh account, no git
+  // credential helpers or prompts, no ssh identities. Applied on create and on every resume.
   server.before("agent.session_open", ({ request }, { paseo: api }) => {
     capture(api);
-    const marked = request.env[RUN_ENV] || inbox.isInboxAgent(request.agentId);
-    if (!marked) return;
-    const env = guardEnv({ ...request.env, [RUN_ENV]: request.env[RUN_ENV] || "resumed" }, shimDir);
     const untrusted = request.env[UNTRUSTED_ENV] === "1" || inbox.runForAgent(request.agentId)?.trusted === false;
-    // Credential hygiene for read-only runs (Cerber §14.3), not a sandbox: no gh account, no git
-    // credential helpers or prompts, no ssh identities.
+    if (!untrusted) return;
     return {
       ...request,
-      env: untrusted
-        ? {
-            ...env,
-            [UNTRUSTED_ENV]: "1",
-            GH_CONFIG_DIR: emptyGh,
-            GH_TOKEN: "",
-            GITHUB_TOKEN: "",
-            GH_ENTERPRISE_TOKEN: "",
-            GITHUB_ENTERPRISE_TOKEN: "",
-            GIT_CONFIG_NOSYSTEM: "1",
-            GIT_CONFIG_GLOBAL: "/dev/null",
-            GIT_TERMINAL_PROMPT: "0",
-            GIT_ASKPASS: "",
-            SSH_ASKPASS: "",
-            SSH_AUTH_SOCK: "",
-            GIT_SSH_COMMAND: "ssh -F /dev/null -o BatchMode=yes -o IdentitiesOnly=yes -o IdentityFile=/dev/null",
-          }
-        : env,
+      env: {
+        ...request.env,
+        [UNTRUSTED_ENV]: "1",
+        GH_CONFIG_DIR: emptyGh,
+        GH_TOKEN: "",
+        GITHUB_TOKEN: "",
+        GH_ENTERPRISE_TOKEN: "",
+        GITHUB_ENTERPRISE_TOKEN: "",
+        GIT_CONFIG_NOSYSTEM: "1",
+        GIT_CONFIG_GLOBAL: "/dev/null",
+        GIT_TERMINAL_PROMPT: "0",
+        GIT_ASKPASS: "",
+        SSH_ASKPASS: "",
+        SSH_AUTH_SOCK: "",
+        GIT_SSH_COMMAND: "ssh -F /dev/null -o BatchMode=yes -o IdentitiesOnly=yes -o IdentityFile=/dev/null",
+      },
     };
   });
   server.on("agent.turn_ended", ({ agent, outcome }, { paseo: api }) => {

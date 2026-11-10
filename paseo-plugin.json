@@ -1,7 +1,7 @@
 {
   "id": "paseo-inbox",
   "name": "Inbox",
-  "description": "Drafts reviews of the PRs you're asked to review (or any PR you paste), with an agent per PR; you read, edit and post them from a review screen. Agents it starts can't write to GitHub, and untrusted authors' PRs get read-only runs.",
+  "description": "Drafts reviews of the PRs you're asked to review (or any PR you paste), with an agent per PR; you read, edit and post them from a review screen. Untrusted authors' PRs get read-only runs.",
   "requirements": {
     "paseo": ">=0.15.3"
   },

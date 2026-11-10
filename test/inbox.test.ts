@@ -162,10 +162,10 @@ describe("requeue", () => {
 });
 
 describe("renderPrompt", () => {
-  it("fills placeholders and prepends the no-writes preamble", () => {
+  it("fills placeholders and prepends the preamble", () => {
     const prompt = renderPrompt(config().rules[1]!, pr());
     expect(prompt).toMatch(/^You were started by paseo-inbox for https:\/\/github.com\/acme\/shop\/pull\/7 at aaaaaaa111\./);
-    expect(prompt).toContain("Do not write to GitHub");
+    expect(prompt).toContain("Do not post to this PR");
     expect(prompt.endsWith("QA #7")).toBe(true);
   });
   it("leaves unknown placeholders as they are", () => {

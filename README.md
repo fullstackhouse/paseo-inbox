@@ -3,8 +3,8 @@
 A [Paseo](https://paseo.sh) plugin that turns PR chores into a rule-driven inbox. It polls
 GitHub PR searches, matches each PR against your rules, and starts one agent per match:
 draft a review, QA a UI change with screenshots, propose a fix for red CI. Agents it starts
-**cannot write to GitHub**. They end with an ask whose Send button carries the write, so
-nothing is posted until you click.
+don't post to the PR on their own: a review goes out when you click **Post**, and other
+writes to the PR wait for a Send click on the agent's ask.
 
 Design: [SPEC-048](https://github.com/fullstackhouse/fsh-monorepo/blob/main/docs/specs/SPEC-048-2026-10-29-paseo-inbox.md).
 
@@ -99,9 +99,9 @@ The reviewer reads the PR through `inbox_pr`: description, diff, and other revie
 
 On a host with plugin notifications (FSH's Paseo build, fullstackhouse/paseo#46), a draft sends **Review draft ready**, and tapping it opens the review. Repeats for the same run are merged. Settings → Plugins → paseo-inbox → "Turn off notifications" mutes it. On other hosts, Paseo's "agent finished" notification opens the reviewer's chat, where the inbox adds a **Review draft ready → Open review** card.
 
-## The write guard
+## Writes to GitHub
 
-Agents the inbox starts get `gh` and `git` shims first on their `PATH`. They pass reads (`gh pr view|diff|checks|checkout`, `gh search`, `gh api` with GET or a GraphQL query) and refuse writes (`gh pr review|comment|merge|edit`, `gh issue create`, `gh api` POST/PATCH/DELETE, GraphQL mutations, `git push`). A refused command tells the agent to put it in an ask instead. An ask's Send button only sends a prompt back to the same guarded agent, so for reviews the write happens through the inbox card's **Post as …** button, which the plugin runs outside the guard. The prompt preamble says the same. This guards against accidents, not against an agent that deliberately calls `/opt/homebrew/bin/gh`.
+The run prompt tells agents not to post to their PR until you say so: reviews go through the review screen's **Post as …** button, which the plugin runs itself, and other writes through a Send click on the agent's ask. Trusted runs keep your `gh` login, so this is an instruction, not a block. Untrusted runs can't run commands and get no GitHub credentials (see trust above).
 
 ## The inbox screen
 
