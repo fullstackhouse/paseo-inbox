@@ -33,6 +33,7 @@ Render Markdown through `@getpaseo/plugin/client/ui`. Use `afterBlock` source ra
 - An ask's Send prompts the same guarded agent, so it can't perform the write. Writes go through a plugin RPC behind a UI button.
 - A GitHub rate limit on agent start keeps the run queued. The daemon's checkout-pr GraphQL call is the first thing to hit the limit.
 - `checkout-pr` makes a new worktree per run (`<branch>-N`); Dismiss archives them via `paseo.workspaces.archive`.
+- `checkout-pr` gets `projectPath: pr.repo` (`prWorktree`). Without it the daemon resolves the repo with `gh repo view`, which prefers an `upstream` remote, so a clone whose `upstream` is another project looks the PR up there. SDK 0.15.3's type lacks the field; FSH Paseo reads it.
 - Runs start in background workspaces (hidden from the sidebar and from other plugins' default agent lists). A turn that starts after the run's own is the human taking over, so `turnStarted` un-hides the workspace with `setBackground(false)`. Only FSH Paseo has it (`features.workspaceBackgroundSet`); elsewhere the call is skipped.
 - FSH Paseo doesn't notify when a turn finishes in a background workspace, so the plugin sends the notifications: `notifyDraftReady` (opens the review) and `notifyRunEnded` (no draft, opens the Inbox; not for canceled turns).
 

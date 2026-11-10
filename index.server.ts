@@ -87,6 +87,15 @@ export function notifyRunEnded(paseo: unknown, run: { runId: string; pr: string;
   });
 }
 
+/**
+ * The checkout names the PR's repo. Left to the daemon, the repo comes from `gh repo view`, which
+ * prefers an `upstream` remote over `origin`, so a clone whose `upstream` is another project looks
+ * the PR up there. The SDK's type doesn't declare `projectPath` yet; FSH Paseo reads it.
+ */
+export function prWorktree(pr: { repo: string; number: number }): { mode: "checkout-pr"; prNumber: number; projectPath: string } {
+  return { mode: "checkout-pr", prNumber: pr.number, projectPath: pr.repo };
+}
+
 export default function contribute(server: PluginServerContext) {
   const dir = dataDir();
   const shimDir = installShims(dir);
@@ -139,7 +148,7 @@ export default function contribute(server: PluginServerContext) {
     if (!trusted && !provider.startsWith("claude")) throw new Error("Untrusted runs need a Claude provider (they rely on its asking mode); trust the author or switch the model");
     const created = await paseo.agents.create({
       cwd,
-      worktree: { mode: "checkout-pr", prNumber: pr.number },
+      worktree: prWorktree(pr),
       background: true,
       title: `Inbox · ${run.rule} · ${pr.repo}#${pr.number}${trusted ? "" : " · read-only"}`,
       config: { provider, modeId: trusted ? mode : "default" },
