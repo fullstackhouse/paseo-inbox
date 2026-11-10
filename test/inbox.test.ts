@@ -248,6 +248,11 @@ describe("reviewPill", () => {
     expect(reviewPill([dismissed], { drafts: ["r"] }, "agent")).toEqual({ runId: "r", label: "Review" });
   });
 
+  it("comes back with the unposted draft when the review is requested again", () => {
+    expect(reviewPill([run("r", { reason: "review requested again by @dana: your draft is back" })], null, "agent")).toEqual({ runId: "r", label: "Review" });
+    expect(reviewPill([run("r", { state: "queued", reason: "review requested again by @dana" })], null, "agent")).toBeNull();
+  });
+
   it("follows the agent's latest run when its review moved to a new head", () => {
     const runs = [run("old", { state: "done", reason: "comments moved to bbbbbbb" }), run("new", { reason: "review moved to bbbbbbb from aaaaaaa" })];
     expect(reviewPill(runs, null, "agent")).toEqual({ runId: "new", label: "Review" });

@@ -327,12 +327,15 @@ export function reopenable(state: State, config: Config, results: Record<string,
  * comes back as it was (no AI run); otherwise a fresh run is queued at the head, in a new round when
  * this head already had one. Earlier dismissals stop counting: later pushes run as usual.
  */
+/** Ends the reason of a reopened run whose unposted draft is back; `reviewPill` keys on it. */
+export const DRAFT_BACK = ": your draft is back";
+
 export function reopen(state: State, config: Config, run: Run, ask: { at: string; by: string }, draft: { posted: boolean } | null, now: string): State {
   const item = state.items[run.itemKey];
   if (!item) return state;
   const why = `review requested again${ask.by ? ` by @${ask.by}` : ""}`;
   const head = item.pr.headSha;
-  if (run.version === head && draft && !draft.posted) return setRun(state, run.id, { state: "needs-decision", reason: `${why}: your draft is back` }, now);
+  if (run.version === head && draft && !draft.posted) return setRun(state, run.id, { state: "needs-decision", reason: `${why}${DRAFT_BACK}` }, now);
   const atHead = state.runs.some((candidate) => candidate.itemKey === run.itemKey && candidate.rule === run.rule && candidate.version === head);
   const round = atHead ? latestRound(state, run.itemKey, run.rule, head) + 1 : 1;
   const next = requeue(state, config, run.itemKey, run.rule, now, { round, reason: why, source: run.source });
@@ -452,7 +455,9 @@ export function reviewPill(runs: readonly Run[], view: Pick<InboxView, "drafts">
   const verdict = /^review drafted: (\S+)/.exec(run.reason ?? "")?.[1];
   if (verdict) return { runId: run.id, label: `Review · ${verdict}` };
   if (run.reason?.startsWith("review posted")) return { runId: run.id, label: "Review posted" };
-  if (run.reason?.startsWith("review moved") || view?.drafts?.includes(run.id)) return { runId: run.id, label: "Review" };
+  // Not every "review …" reason: a requeued run reads "review requested again" while it drafts anew.
+  const backOrMoved = run.reason?.startsWith("review moved") || run.reason?.endsWith(DRAFT_BACK);
+  if (backOrMoved || view?.drafts?.includes(run.id)) return { runId: run.id, label: "Review" };
   return null;
 }
 
