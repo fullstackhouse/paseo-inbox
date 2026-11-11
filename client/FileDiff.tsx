@@ -20,7 +20,8 @@ export interface DiffActions {
   onDelete: (commentId: string) => Promise<void>;
   onAdd: (comment: { path: string; line: number | null; side: "LEFT" | "RIGHT"; severity: Severity; body: string }) => Promise<void>;
   /** Sends `question` to the reviewer agent, quoting what it's `about`. */
-  onAsk: (question: string, about: string) => void;
+  /** True once the question was sent; on failure the caller keeps the typed text. */
+  onAsk: (question: string, about: string) => Promise<boolean>;
 }
 
 type Target = { line: number | null; side: "LEFT" | "RIGHT"; text?: string };
@@ -107,7 +108,7 @@ export function FileDiff({
       where={where}
       onChange={(change) => actions.onChange(comment.id, change)}
       onDelete={() => actions.onDelete(comment.id)}
-      onDiscuss={() => actions.onAsk("", `your comment on ${comment.path}${comment.line ? `:${comment.line}` : ""} (${comment.id}): "${comment.body}"`)}
+      onDiscuss={(question) => actions.onAsk(question, `your comment on ${comment.path}${comment.line ? `:${comment.line}` : ""} (${comment.id}): "${comment.body}"`)}
     />
   );
   const composer = (at: Target) => (
@@ -119,9 +120,9 @@ export function FileDiff({
         await actions.onAdd({ path: file.path, line: at.line, side: at.side, severity, body });
         setTarget(null);
       }}
-      onAsk={(question) => {
-        actions.onAsk(question, at.line ? `${file.path}:${at.line}${at.text !== undefined ? `, the line \`${at.text.trim()}\`` : ""}` : `the file ${file.path}`);
-        setTarget(null);
+      onAsk={async (question) => {
+        const sent = await actions.onAsk(question, at.line ? `${file.path}:${at.line}${at.text !== undefined ? `, the line \`${at.text.trim()}\`` : ""}` : `the file ${file.path}`);
+        if (sent) setTarget(null);
       }}
     />
   );
