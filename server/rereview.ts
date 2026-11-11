@@ -2,13 +2,12 @@ import { runId as makeRunId } from "../shared/inbox";
 import { reanchorDraft, sinceBase, sinceChanges, type Compare, type MyReview, type Since } from "../shared/rereview";
 import type { PrDetails, PrFile } from "../shared/review";
 import type { Inbox } from "./inbox";
-import type { Details } from "./post";
+import type { Details, FilesAt } from "./post";
 import type { ReviewStore } from "./reviews";
 
 export interface RereviewDeps {
   details: Details;
-  /** The PR's files at an earlier head, or null when that's no longer known. */
-  filesAt: (repo: string, number: number, sha: string, live: PrDetails) => Promise<PrFile[] | null>;
+  filesAt: FilesAt;
 }
 
 /**

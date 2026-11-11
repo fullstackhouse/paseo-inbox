@@ -175,14 +175,34 @@ describe("MCP tools", () => {
 });
 
 describe("postDraft", () => {
+  it("posts a draft the PR moved past on its own commit, against that commit's diff", async () => {
+    const { inbox, reviews, state } = setup();
+    await inbox.poll();
+    await callTool(inbox, reviews, "agent-1", "inbox_review_draft", raw, NOW);
+    const runId = state().runs[0]!.id;
+    const post = vi.fn(async (_repo: string, _number: number, _payload: unknown) => "https://github.com/acme/shop/pull/7#pullrequestreview-1");
+    const filesAt = vi.fn(async () => details("aaaaaaa111").files);
+    const moved = { ...details("bbbbbbb222"), files: [] };
+    expect(await postDraft(inbox, reviews, runId, post, async () => moved, NOW, undefined, filesAt)).toMatchObject({ inline: 1, folded: 1 });
+    expect(filesAt).toHaveBeenCalledWith("acme/shop", 7, "aaaaaaa111", moved);
+    expect(post.mock.calls[0]![2]).toMatchObject({ commit_id: "aaaaaaa111", comments: [{ path: PATH, line: 11 }] });
+    expect(state().runs[0]).toMatchObject({ state: "done" });
+  });
+
+  it("folds every comment into the body when the moved-past diff is unknown", async () => {
+    const { inbox, reviews, state } = setup();
+    await inbox.poll();
+    await callTool(inbox, reviews, "agent-1", "inbox_review_draft", raw, NOW);
+    const post = vi.fn(async () => "u");
+    expect(await postDraft(inbox, reviews, state().runs[0]!.id, post, async () => details("bbbbbbb222"), NOW)).toMatchObject({ inline: 0, folded: 2 });
+  });
+
   it("checks GitHub's live head, folds what can't go inline, posts once", async () => {
     const { inbox, reviews, state } = setup();
     await inbox.poll();
     await callTool(inbox, reviews, "agent-1", "inbox_review_draft", raw, NOW);
     const runId = state().runs[0]!.id;
     const post = vi.fn(async () => "https://github.com/acme/shop/pull/7#pullrequestreview-1");
-    await expect(postDraft(inbox, reviews, runId, post, async () => details("bbbbbbb222"))).rejects.toThrow("new commits since this draft (aaaaaaa → bbbbbbb)");
-    expect(post).not.toHaveBeenCalled();
     expect(await postDraft(inbox, reviews, runId, post, async () => details("aaaaaaa111"), NOW)).toEqual({ url: "https://github.com/acme/shop/pull/7#pullrequestreview-1", inline: 1, folded: 1, replies: 0, failedReplies: 0 });
     expect(reviews.get(runId)).toMatchObject({ postedVerdict: "request-changes" });
     expect(state().runs[0]).toMatchObject({ state: "done" });
