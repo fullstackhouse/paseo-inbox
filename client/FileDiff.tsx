@@ -107,7 +107,7 @@ export function FileDiff({
       where={where}
       onChange={(change) => actions.onChange(comment.id, change)}
       onDelete={() => actions.onDelete(comment.id)}
-      onDiscuss={() => actions.onAsk("", `your comment on ${comment.path}${comment.line ? `:${comment.line}` : ""} (${comment.id}): "${comment.body}"`)}
+      onDiscuss={(question) => actions.onAsk(question, `your comment on ${comment.path}${comment.line ? `:${comment.line}` : ""} (${comment.id}): "${comment.body}"`)}
     />
   );
   const composer = (at: Target) => (

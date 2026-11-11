@@ -16,7 +16,6 @@ import {
   postReview,
   previewReview,
   prPeople,
-  REVISE_TOOL,
   setReviewBody,
   setFileViewed,
   setReviewVerdict,
@@ -30,7 +29,7 @@ import {
   type Severity,
 } from "../shared/review";
 import { reanchorReview, reviewSince, type Since } from "../shared/rereview";
-import { CommentCard } from "./CommentCard";
+import { AskBox, CommentCard } from "./CommentCard";
 import { HandoffPanel, PreviewPane } from "./Decide";
 import { FileDiff, type DiffActions } from "./FileDiff";
 import { Markdown } from "./Markdown";
@@ -90,6 +89,7 @@ export function ReviewScreen({ theme, layout, navigation, params }: PluginScreen
   const [since, setSince] = useState<Since | null>(null);
   const [sinceOpen, setSinceOpen] = useState<Set<string>>(new Set());
   const [handingOff, setHandingOff] = useState(false);
+  const [askingSummary, setAskingSummary] = useState(false);
   const openUrl = useOpenUrl();
 
   const [draft, setDraft] = useState<ReviewDraft | null>(null);
@@ -123,6 +123,7 @@ export function ReviewScreen({ theme, layout, navigation, params }: PluginScreen
     setNotice(carried.current);
     carried.current = null;
     setTab("summary");
+    setAskingSummary(false);
     setOpenFiles(new Set());
     setClosedChapters(new Set());
     scroll.current?.scrollTo({ y: 0, animated: false });
@@ -208,8 +209,7 @@ export function ReviewScreen({ theme, layout, navigation, params }: PluginScreen
   const ask = useCallback(
     async (question: string, about: string) => {
       try {
-        const text = question || `Is this right? If the draft should change, change it with ${REVISE_TOOL}.`;
-        await discuss({ runId, message: `About ${about}:\n\n${text}` });
+        await discuss({ runId, message: `About ${about}:\n\n${question}` });
         if (run?.agentId && navigation) navigation.openAgent({ agentId: run.agentId });
         else setNotice("Sent to the reviewer.");
       } catch (caught) {
@@ -541,8 +541,17 @@ export function ReviewScreen({ theme, layout, navigation, params }: PluginScreen
                   <Markdown text={draft.reasoning} theme={theme} size={14} />
                 </View>
               ) : null}
-              {editable ? (
-                <Chip theme={theme} label="Ask about the summary" style={{ ...small, alignSelf: "flex-start" }} textStyle={{ fontSize: 12 }} onPress={() => void ask("", "your summary and verdict")} />
+              {editable && askingSummary ? (
+                <AskBox
+                  theme={theme}
+                  onCancel={() => setAskingSummary(false)}
+                  onAsk={(question) => {
+                    setAskingSummary(false);
+                    void ask(question, "your summary and verdict");
+                  }}
+                />
+              ) : editable ? (
+                <Chip theme={theme} label="Ask about the summary" style={{ ...small, alignSelf: "flex-start" }} textStyle={{ fontSize: 12 }} onPress={() => setAskingSummary(true)} />
               ) : null}
             </>
           ) : null}
@@ -654,7 +663,7 @@ export function ReviewScreen({ theme, layout, navigation, params }: PluginScreen
                   where={details ? placement(comment, files) : "inline"}
                   onChange={(change) => actions.onChange(comment.id, change)}
                   onDelete={() => actions.onDelete(comment.id)}
-                  onDiscuss={() => void ask("", `your comment on ${comment.path}${comment.line ? `:${comment.line}` : ""} (${comment.id}): "${comment.body}"`)}
+                  onDiscuss={(question) => void ask(question, `your comment on ${comment.path}${comment.line ? `:${comment.line}` : ""} (${comment.id}): "${comment.body}"`)}
                   onOpenFile={() => {
                     toggleFile(comment.path, true);
                     setTab("files");

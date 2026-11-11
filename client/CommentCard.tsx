@@ -48,10 +48,12 @@ export function CommentCard({
   where?: Placement;
   onChange: (change: CommentChange) => Promise<void>;
   onDelete?: () => Promise<void>;
-  onDiscuss?: () => void;
+  /** Sends the human's question about this comment to the reviewer. */
+  onDiscuss?: (question: string) => void;
   onOpenFile?: () => void;
 }) {
   const [editing, setEditing] = useState(false);
+  const [asking, setAsking] = useState(false);
   const [text, setText] = useState(comment.body);
   const [busy, setBusy] = useState(false);
   const dropped = comment.status === "dropped";
@@ -140,11 +142,46 @@ export function CommentCard({
               ) : (
                 <Chip theme={theme} label="Drop" disabled={busy} style={small} textStyle={smallText} onPress={() => void run(() => onChange({ status: "dropped" }))} />
               )}
-              {onDiscuss && !mine ? <Chip theme={theme} label="Ask about this" style={small} textStyle={smallText} onPress={onDiscuss} /> : null}
+              {onDiscuss && !mine && !asking ? <Chip theme={theme} label="Ask about this" style={small} textStyle={smallText} onPress={() => setAsking(true)} /> : null}
             </>
           )}
         </View>
       ) : null}
+      {editable && asking && onDiscuss ? (
+        <AskBox
+          theme={theme}
+          onCancel={() => setAsking(false)}
+          onAsk={(question) => {
+            onDiscuss(question);
+            setAsking(false);
+          }}
+        />
+      ) : null}
+    </View>
+  );
+}
+
+/** A question for the reviewer, typed before anything is sent. */
+export function AskBox({ theme, onAsk, onCancel }: { theme: PluginTheme; onAsk: (question: string) => void; onCancel: () => void }) {
+  const [text, setText] = useState("");
+  const small = { paddingVertical: 4, paddingHorizontal: 10 };
+  const smallText = { fontSize: 12 };
+  const question = text.trim();
+  return (
+    <View style={{ gap: 8 }}>
+      <TextInput
+        value={text}
+        onChangeText={setText}
+        multiline
+        autoFocus
+        placeholder="Your question for the reviewer"
+        placeholderTextColor={theme.colors.foregroundMuted}
+        style={{ color: theme.colors.foreground, fontSize: 15, minHeight: 70, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 8, padding: 10, textAlignVertical: "top" }}
+      />
+      <View style={{ flexDirection: "row", gap: 6, flexWrap: "wrap" }}>
+        <Chip theme={theme} active label="Ask the reviewer" disabled={!question} style={small} textStyle={smallText} onPress={() => onAsk(question)} />
+        <Chip theme={theme} label="Cancel" style={small} textStyle={smallText} onPress={onCancel} />
+      </View>
     </View>
   );
 }
