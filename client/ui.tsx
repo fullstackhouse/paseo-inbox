@@ -1,6 +1,7 @@
 import type { PluginTheme } from "@getpaseo/plugin";
 import type { ReactNode } from "react";
 import { Platform, Pressable, Text, type StyleProp, type TextStyle, type ViewStyle } from "react-native";
+import type { Severity } from "../shared/review";
 
 export const MONO = Platform.select({ ios: "Menlo", android: "monospace", default: "ui-monospace, SFMono-Regular, Menlo, monospace" });
 
@@ -19,8 +20,8 @@ export function tint(color: string, alpha: number): string {
 export const verdictColor = (theme: PluginTheme, verdict: string) =>
   verdict === "approve" ? theme.colors.statusSuccess : verdict === "request-changes" ? theme.colors.statusDanger : theme.colors.statusWarning;
 
-export const severityColor = (theme: PluginTheme, severity: string) =>
-  severity === "blocker" ? theme.colors.statusDanger : severity === "major" ? theme.colors.statusWarning : theme.colors.foregroundMuted;
+export const severityColor = (theme: PluginTheme, severity: NonNullable<Severity>) =>
+  severity === "blocker" ? theme.colors.statusDanger : severity === "minor" ? theme.colors.statusWarning : theme.colors.foregroundMuted;
 
 export function Pill({ theme, color, children }: { theme: PluginTheme; color: string; children: ReactNode }) {
   return (
