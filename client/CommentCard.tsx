@@ -48,8 +48,8 @@ export function CommentCard({
   where?: Placement;
   onChange: (change: CommentChange) => Promise<void>;
   onDelete?: () => Promise<void>;
-  /** Sends the human's question about this comment to the reviewer. */
-  onDiscuss?: (question: string) => void;
+  /** Sends the human's question about this comment to the reviewer; true once it was sent. */
+  onDiscuss?: (question: string) => Promise<boolean>;
   onOpenFile?: () => void;
 }) {
   const [editing, setEditing] = useState(false);
@@ -136,11 +136,30 @@ export function CommentCard({
               ) : !mine && comment.status === "draft" ? (
                 <Chip theme={theme} label="Keep" disabled={busy} style={small} textStyle={smallText} onPress={() => void run(() => onChange({ status: "kept" }))} />
               ) : null}
-              <Chip theme={theme} label="Edit" style={small} textStyle={smallText} onPress={() => setEditing(true)} />
+              <Chip
+                theme={theme}
+                label="Edit"
+                style={small}
+                textStyle={smallText}
+                onPress={() => {
+                  setAsking(false);
+                  setEditing(true);
+                }}
+              />
               {mine && onDelete ? (
                 <Chip theme={theme} label="Delete" disabled={busy} style={small} textStyle={smallText} onPress={() => void run(onDelete)} />
               ) : (
-                <Chip theme={theme} label="Drop" disabled={busy} style={small} textStyle={smallText} onPress={() => void run(() => onChange({ status: "dropped" }))} />
+                <Chip
+                  theme={theme}
+                  label="Drop"
+                  disabled={busy}
+                  style={small}
+                  textStyle={smallText}
+                  onPress={() => {
+                    setAsking(false);
+                    void run(() => onChange({ status: "dropped" }));
+                  }}
+                />
               )}
               {onDiscuss && !mine && !asking ? <Chip theme={theme} label="Ask about this" style={small} textStyle={smallText} onPress={() => setAsking(true)} /> : null}
             </>
@@ -151,9 +170,8 @@ export function CommentCard({
         <AskBox
           theme={theme}
           onCancel={() => setAsking(false)}
-          onAsk={(question) => {
-            onDiscuss(question);
-            setAsking(false);
+          onAsk={async (question) => {
+            if (await onDiscuss(question)) setAsking(false);
           }}
         />
       ) : null}
@@ -161,9 +179,18 @@ export function CommentCard({
   );
 }
 
-/** A question for the reviewer, typed before anything is sent. */
-export function AskBox({ theme, onAsk, onCancel }: { theme: PluginTheme; onAsk: (question: string) => void; onCancel: () => void }) {
+/** A question for the reviewer, typed before anything is sent. The parent closes it once the question went out, so a failed send keeps the text. */
+export function AskBox({ theme, onAsk, onCancel }: { theme: PluginTheme; onAsk: (question: string) => Promise<void>; onCancel: () => void }) {
   const [text, setText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const send = async () => {
+    setBusy(true);
+    try {
+      await onAsk(question);
+    } finally {
+      setBusy(false);
+    }
+  };
   const small = { paddingVertical: 4, paddingHorizontal: 10 };
   const smallText = { fontSize: 12 };
   const question = text.trim();
@@ -179,7 +206,7 @@ export function AskBox({ theme, onAsk, onCancel }: { theme: PluginTheme; onAsk: 
         style={{ color: theme.colors.foreground, fontSize: 15, minHeight: 70, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 8, padding: 10, textAlignVertical: "top" }}
       />
       <View style={{ flexDirection: "row", gap: 6, flexWrap: "wrap" }}>
-        <Chip theme={theme} active label="Ask the reviewer" disabled={!question} style={small} textStyle={smallText} onPress={() => onAsk(question)} />
+        <Chip theme={theme} active label="Ask the reviewer" disabled={busy || !question} style={small} textStyle={smallText} onPress={() => void send()} />
         <Chip theme={theme} label="Cancel" style={small} textStyle={smallText} onPress={onCancel} />
       </View>
     </View>
@@ -187,19 +214,20 @@ export function AskBox({ theme, onAsk, onCancel }: { theme: PluginTheme; onAsk: 
 }
 
 /** Write a new comment on a line (or the whole file), or put a question to the reviewer instead. */
-export function Composer({ theme, target, onAdd, onAsk, onCancel }: { theme: PluginTheme; target: string; onAdd: (body: string, severity: Severity) => Promise<void>; onAsk?: (question: string) => void; onCancel: () => void }) {
+export function Composer({ theme, target, onAdd, onAsk, onCancel }: { theme: PluginTheme; target: string; onAdd: (body: string, severity: Severity) => Promise<void>; onAsk?: (question: string) => Promise<void>; onCancel: () => void }) {
   const [text, setText] = useState("");
   const [severity, setSeverity] = useState<Severity>(null);
   const [busy, setBusy] = useState(false);
   const small = { paddingVertical: 4, paddingHorizontal: 10 };
-  const add = async () => {
+  const busyWhile = async (action: () => Promise<void>) => {
     setBusy(true);
     try {
-      await onAdd(text.trim(), severity);
+      await action();
     } finally {
       setBusy(false);
     }
   };
+  const add = () => busyWhile(() => onAdd(text.trim(), severity));
   return (
     <View style={{ backgroundColor: theme.colors.surface1, borderRadius: 10, borderWidth: 1, borderColor: theme.colors.accent, padding: 12, gap: 8 }}>
       <Text style={{ color: theme.colors.foregroundMuted, fontSize: 12 }}>{target}</Text>
@@ -215,7 +243,7 @@ export function Composer({ theme, target, onAdd, onAsk, onCancel }: { theme: Plu
       <SeverityPicker theme={theme} value={severity} onChange={setSeverity} />
       <View style={{ flexDirection: "row", gap: 6, flexWrap: "wrap" }}>
         <Chip theme={theme} active label="Add comment" disabled={busy || !text.trim()} style={small} onPress={() => void add()} />
-        {onAsk ? <Chip theme={theme} label="Ask the reviewer" disabled={!text.trim()} style={small} onPress={() => onAsk(text.trim())} /> : null}
+        {onAsk ? <Chip theme={theme} label="Ask the reviewer" disabled={busy || !text.trim()} style={small} onPress={() => void busyWhile(() => onAsk(text.trim()))} /> : null}
         <Chip theme={theme} label="Cancel" style={small} onPress={onCancel} />
       </View>
     </View>

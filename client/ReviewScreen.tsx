@@ -206,14 +206,17 @@ export function ReviewScreen({ theme, layout, navigation, params }: PluginScreen
   };
   const next = queue.slice(position + 1).find((id) => view?.runs.some((candidate) => candidate.id === id && candidate.state === "needs-decision"));
 
+  /** True once the question reached the reviewer; on failure the error shows and the asker keeps its text. */
   const ask = useCallback(
-    async (question: string, about: string) => {
+    async (question: string, about: string): Promise<boolean> => {
       try {
         await discuss({ runId, message: `About ${about}:\n\n${question}` });
         if (run?.agentId && navigation) navigation.openAgent({ agentId: run.agentId });
         else setNotice("Sent to the reviewer.");
+        return true;
       } catch (caught) {
         fail(caught);
+        return false;
       }
     },
     [discuss, runId, run?.agentId, navigation],
@@ -242,7 +245,7 @@ export function ReviewScreen({ theme, layout, navigation, params }: PluginScreen
         fail(caught);
       }
     },
-    onAsk: (question, about) => void ask(question, about),
+    onAsk: ask,
   };
 
   const act = async (label: string, action: () => Promise<void>) => {
@@ -545,9 +548,8 @@ export function ReviewScreen({ theme, layout, navigation, params }: PluginScreen
                 <AskBox
                   theme={theme}
                   onCancel={() => setAskingSummary(false)}
-                  onAsk={(question) => {
-                    setAskingSummary(false);
-                    void ask(question, "your summary and verdict");
+                  onAsk={async (question) => {
+                    if (await ask(question, "your summary and verdict")) setAskingSummary(false);
                   }}
                 />
               ) : editable ? (
@@ -663,7 +665,7 @@ export function ReviewScreen({ theme, layout, navigation, params }: PluginScreen
                   where={details ? placement(comment, files) : "inline"}
                   onChange={(change) => actions.onChange(comment.id, change)}
                   onDelete={() => actions.onDelete(comment.id)}
-                  onDiscuss={(question) => void ask(question, `your comment on ${comment.path}${comment.line ? `:${comment.line}` : ""} (${comment.id}): "${comment.body}"`)}
+                  onDiscuss={(question) => ask(question, `your comment on ${comment.path}${comment.line ? `:${comment.line}` : ""} (${comment.id}): "${comment.body}"`)}
                   onOpenFile={() => {
                     toggleFile(comment.path, true);
                     setTab("files");
