@@ -23,6 +23,7 @@ import {
   deleteHumanComment,
   deleteReviewComment,
   discussReview,
+  effectiveVerdict,
   getPrDetails,
   getReview,
   handoffReview,
@@ -169,7 +170,7 @@ export default function contribute(server: PluginServerContext) {
     me,
     draftOf: (runId) => {
       const draft = reviews.get(runId);
-      return draft ? { posted: Boolean(draft.postedUrl) } : null;
+      return draft ? { posted: Boolean(draft.postedUrl), verdict: effectiveVerdict(draft) } : null;
     },
     hasDraft: (runId) => reviews.has(runId),
     trust: (pr, config) => decideTrust(pr.author, config.trust, membership),

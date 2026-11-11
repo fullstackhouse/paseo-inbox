@@ -11,6 +11,7 @@ import { emptyState, type State } from "../shared/inbox";
 import {
   addHumanComment,
   composeReview,
+  postSummary,
   deleteHumanComment,
   draftHeadline,
   placement,
@@ -84,6 +85,16 @@ describe("placement and composeReview", () => {
     expect(payload.comments.map((comment) => comment.line)).toEqual([12]);
   });
   it("leaves ungraded remarks bare", () => expect(withGrade("Why?", null)).toBe("Why?"));
+});
+
+describe("postSummary", () => {
+  // Two raised comments: one held back, one the human replies with. Neither goes in the review.
+  const raised = { ...draft, comments: [...draft.comments, { ...draft.comments[0]!, id: "r1", raised: 5, reply: false }, { ...draft.comments[0]!, id: "r2", raised: 6, reply: true }] };
+  it("counts what composeReview posts, with the folded count once the files are known", () => {
+    expect(postSummary(raised, files)).toEqual({ posted: 4, folded: 2, replies: 1, held: 1, dropped: 0 });
+    expect(postSummary(raised, null)).toEqual({ posted: 4, folded: null, replies: 1, held: 1, dropped: 0 });
+    expect(postSummary(updateComment(raised, "c1", { status: "dropped" }), files)).toMatchObject({ posted: 3, folded: 2, dropped: 1 });
+  });
 });
 
 describe("walkthrough", () => {

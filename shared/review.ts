@@ -304,6 +304,29 @@ export function composeReview(draft: ReviewDraft, files: readonly { path: string
   };
 }
 
+export type PostSummary = { posted: number; folded: number | null; replies: number; held: number; dropped: number };
+
+/**
+ * What posting sends, for the confirm: comments that go in the review (`posted`, of which `folded` land
+ * in the body once the files are known), replies to existing threads, and already-raised comments held
+ * back. Same rules as `composeReview`, so the confirm matches the post.
+ */
+export function postSummary(draft: ReviewDraft, files: readonly { path: string; patch?: string }[] | null): PostSummary {
+  const dropped = draft.comments.filter((comment) => comment.status === "dropped").length;
+  if (files) {
+    const { inline, folded, replies, held } = composeReview(draft, files);
+    return { posted: inline + folded, folded, replies: replies.length, held, dropped };
+  }
+  const live = draft.comments.filter((comment) => comment.status !== "dropped");
+  return {
+    posted: live.filter((comment) => comment.raised === null).length,
+    folded: null,
+    replies: live.filter((comment) => comment.raised !== null && comment.reply).length,
+    held: live.filter(isHeld).length,
+    dropped,
+  };
+}
+
 /** A folded comment's place in the body; a drifted one quotes the code it was about, since that line changed. */
 function where(comment: StoredComment): string {
   if (!comment.drifted) return `\`${comment.path}${comment.line ? `:${comment.line}` : ""}\``;

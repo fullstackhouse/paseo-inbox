@@ -1,5 +1,6 @@
 import { DISMISSED, draftsReviews, latestRound, modeFor, moveRun, noCheckoutReason, plan, renderPrompt, providerFor, reopen, reopenable, requeue, runId, setRun, startable, type Config, type InboxView, type Pr, type Run, type State } from "../shared/inbox";
 import { askedAgain, type ReviewRequest } from "../shared/rereview";
+import type { Verdict } from "../shared/review";
 
 /** At most this many "asked again?" timeline reads per poll. */
 const REOPEN_CHECKS = 10;
@@ -37,8 +38,8 @@ export interface InboxDeps {
   requests?: (pr: Pr) => Promise<ReviewRequest[]>;
   /** The signed-in GitHub login. */
   me?: () => Promise<string>;
-  /** Whether a run has a review draft, and whether it was posted. */
-  draftOf?: (runId: string) => { posted: boolean } | null;
+  /** A run's review draft: whether it was posted, and the verdict it posts as. */
+  draftOf?: (runId: string) => { posted: boolean; verdict: Verdict } | null;
   /** Whether a run has a review draft on disk; cheaper than `draftOf`, asked on every list. */
   hasDraft?: (runId: string) => boolean;
   /** Moves a run's (background) workspace into the sidebar, once the human works in it. */
@@ -68,7 +69,23 @@ export class Inbox {
   }
 
   view(): InboxView {
-    return { items: this.state.items, runs: this.state.runs, lastPollAt: this.lastPollAt, errors: this.errors, reviewRules: this.reviewRules(), drafts: this.settledDrafts() };
+    return { items: this.state.items, runs: this.state.runs, lastPollAt: this.lastPollAt, errors: this.errors, reviewRules: this.reviewRules(), drafts: this.settledDrafts(), postable: this.postable() };
+  }
+
+  /**
+   * Runs waiting on the human with a draft, and the verdict it posts as. Posting settles the run and a
+   * push marks it stale, so both drop out; `postDraft` still refuses a posted or stale draft.
+   */
+  private postable(): Record<string, Verdict> {
+    const draftOf = this.deps.draftOf;
+    if (!draftOf) return {};
+    const postable: Record<string, Verdict> = {};
+    for (const run of this.state.runs) {
+      if (run.state !== "needs-decision") continue;
+      const draft = draftOf(run.id);
+      if (draft) postable[run.id] = draft.verdict;
+    }
+    return postable;
   }
 
   /** Settled runs whose reason no longer says "review …" (dismissed, stale, done) but whose draft is still saved. */
