@@ -711,7 +711,7 @@ export function ReviewScreen({ theme, layout, navigation, params }: PluginScreen
                   onPress={() =>
                     void act("verdict", async () => {
                       setDraft(await setVerdict({ runId, verdict: option }));
-                      // The chat's Post pill names the verdict.
+                      // The chat pill's Post item names the verdict.
                       await refresh();
                     })
                   }

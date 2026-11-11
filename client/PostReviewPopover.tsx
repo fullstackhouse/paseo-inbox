@@ -2,51 +2,77 @@ import type { PluginTheme } from "@getpaseo/plugin";
 import type { PluginButtonContentProps } from "@getpaseo/plugin/client";
 import { useEffect, useMemo, useState, useSyncExternalStore, type ComponentType } from "react";
 import { ActivityIndicator, Pressable, Text, View } from "react-native";
-import { effectiveVerdict, verdictMismatch, type ReviewDraft } from "../shared/review";
+import { effectiveVerdict, placement, verdictMismatch, type PrFile, type ReviewDraft } from "../shared/review";
 import { Chip, verdictColor } from "./ui";
+
+/** The run the agent's pill can post, while it has one. One object per change, so it is a stable snapshot. */
+export type PostTarget = { runId: string; itemKey: string };
 
 /** The pills module's state and actions, as the popover sees them. */
 export interface PostStore {
-  /** The run whose draft the agent's Post pill posts, while it has one. */
-  runFor(agentId: string): string | undefined;
+  targetFor(agentId: string): PostTarget | undefined;
   subscribe(listener: () => void): () => void;
   draft(runId: string): Promise<ReviewDraft | null>;
+  /** The PR's changed files at `version` with their patches, to tell which comments can sit on a line. */
+  files(itemKey: string, version: string): Promise<readonly PrFile[]>;
   post(runId: string): Promise<void>;
 }
 
+type Loaded = {
+  draft: ReviewDraft;
+  /** Comments that go in the review body instead of on a line; null when the PR's files couldn't be read. */
+  inBody: number | null;
+};
+
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
+async function load(store: PostStore, target: PostTarget): Promise<Loaded | null> {
+  const draft = await store.draft(target.runId);
+  if (!draft) return null;
+  const live = draft.comments.filter((comment) => comment.status !== "dropped");
+  if (!live.length) return { draft, inBody: 0 };
+  // Posting re-reads the files and refuses when it can't, so a failed read here only hides the count.
+  const files = await store.files(target.itemKey, draft.version).catch(() => null);
+  return { draft, inBody: files ? live.filter((comment) => placement(comment, files) !== "inline").length : null };
+}
+
 /**
- * The Post pill's confirm: what goes out (verdict, comments, the verdict-vs-findings warning), then
- * Post or Cancel. Changing the verdict or the comments stays on the review screen.
+ * The confirm behind the pill's Post item: what goes out (verdict, comments, which of them land in the
+ * review body, the verdict-vs-findings warning), then Post or Cancel. Changing the verdict or the
+ * comments stays on the review screen.
  */
 export function makePostPopover(store: PostStore): ComponentType<PluginButtonContentProps> {
   return function PostReviewPopover(props: PluginButtonContentProps) {
     const agentId = props.context === "agent" ? props.agentId : null;
-    const runId = useSyncExternalStore(store.subscribe, () => (agentId ? store.runFor(agentId) : undefined));
+    const target = useSyncExternalStore(store.subscribe, () => (agentId ? store.targetFor(agentId) : undefined));
     const styles = useMemo(() => makeStyles(props.theme, props.layout.compact), [props.theme, props.layout.compact]);
-    const [draft, setDraft] = useState<ReviewDraft | null>(null);
+    const [loaded, setLoaded] = useState<Loaded | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [posting, setPosting] = useState(false);
 
     useEffect(() => {
-      if (!runId) return;
+      if (!target) return;
       let current = true;
-      setDraft(null);
+      setLoaded(null);
       setError(null);
-      store.draft(runId).then(
-        (loaded) => current && setDraft(loaded),
+      load(store, target).then(
+        (result) => {
+          if (!current) return;
+          if (result) setLoaded(result);
+          else setError("This review has no draft any more.");
+        },
         (caught: unknown) => current && setError(message(caught)),
       );
       return () => {
         current = false;
       };
-    }, [runId]);
+    }, [target]);
 
-    if (!runId) return <Text style={styles.muted}>Nothing to post.</Text>;
-    if (error && !draft) return <Text style={styles.danger}>{error}</Text>;
-    if (!draft) return <ActivityIndicator color={props.theme.colors.foregroundMuted} />;
+    if (!target) return <Text style={styles.muted}>Nothing to post.</Text>;
+    if (error && !loaded) return <Text style={styles.danger}>{error}</Text>;
+    if (!loaded) return <ActivityIndicator color={props.theme.colors.foregroundMuted} />;
 
+    const { draft, inBody } = loaded;
     const verdict = effectiveVerdict(draft);
     const live = draft.comments.filter((comment) => comment.status !== "dropped").length;
     const dropped = draft.comments.length - live;
@@ -55,7 +81,7 @@ export function makePostPopover(store: PostStore): ComponentType<PluginButtonCon
       setPosting(true);
       setError(null);
       try {
-        await store.post(runId);
+        await store.post(target.runId);
         props.close();
       } catch (caught) {
         setError(message(caught));
@@ -73,6 +99,11 @@ export function makePostPopover(store: PostStore): ComponentType<PluginButtonCon
           {dropped ? ` · ${dropped} dropped` : ""}
           {draft.bodyOverride !== undefined ? " · your edited body" : ""}
         </Text>
+        {inBody ? (
+          <Text style={styles.warning}>
+            {inBody === live ? (live === 1 ? "It goes" : "They all go") : `${inBody} of them go${inBody === 1 ? "es" : ""}`} in the review body, not on a line of the diff.
+          </Text>
+        ) : null}
         {mismatch ? <Text style={styles.warning}>{mismatch}.</Text> : null}
         {error ? <Text style={styles.danger}>{error}</Text> : null}
         <Text style={styles.muted}>To change the verdict or the comments, open the review.</Text>
