@@ -2,7 +2,7 @@ import type { PluginTheme } from "@getpaseo/plugin";
 import type { PluginButtonContentProps } from "@getpaseo/plugin/client";
 import { useEffect, useMemo, useState, useSyncExternalStore, type ComponentType } from "react";
 import { ActivityIndicator, Pressable, Text, View } from "react-native";
-import { effectiveVerdict, placement, verdictMismatch, type PrFile, type ReviewDraft } from "../shared/review";
+import { effectiveVerdict, postSummary, verdictMismatch, type PostSummary, type PrFile, type ReviewDraft } from "../shared/review";
 import { Chip, verdictColor } from "./ui";
 
 /** The run the agent's pill can post, while it has one. One object per change, so it is a stable snapshot. */
@@ -20,8 +20,8 @@ export interface PostStore {
 
 type Loaded = {
   draft: ReviewDraft;
-  /** Comments that go in the review body instead of on a line; null when the PR's files couldn't be read. */
-  inBody: number | null;
+  /** `folded` is null while the PR's files couldn't be read. */
+  summary: PostSummary;
 };
 
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
@@ -29,11 +29,11 @@ const message = (error: unknown) => (error instanceof Error ? error.message : St
 async function load(store: PostStore, target: PostTarget): Promise<Loaded | null> {
   const draft = await store.draft(target.runId);
   if (!draft) return null;
-  const live = draft.comments.filter((comment) => comment.status !== "dropped");
-  if (!live.length) return { draft, inBody: 0 };
+  const summary = postSummary(draft, null);
+  if (!summary.posted) return { draft, summary: { ...summary, folded: 0 } };
   // Posting re-reads the files and refuses when it can't, so a failed read here only hides the count.
   const files = await store.files(target.itemKey, draft.version).catch(() => null);
-  return { draft, inBody: files ? live.filter((comment) => placement(comment, files) !== "inline").length : null };
+  return { draft, summary: files ? postSummary(draft, files) : summary };
 }
 
 /**
@@ -72,10 +72,9 @@ export function makePostPopover(store: PostStore): ComponentType<PluginButtonCon
     if (error && !loaded) return <Text style={styles.danger}>{error}</Text>;
     if (!loaded) return <ActivityIndicator color={props.theme.colors.foregroundMuted} />;
 
-    const { draft, inBody } = loaded;
+    const { draft, summary } = loaded;
+    const { posted, folded, replies, held, dropped } = summary;
     const verdict = effectiveVerdict(draft);
-    const live = draft.comments.filter((comment) => comment.status !== "dropped").length;
-    const dropped = draft.comments.length - live;
     const mismatch = verdictMismatch(draft);
     const post = async () => {
       setPosting(true);
@@ -95,13 +94,15 @@ export function makePostPopover(store: PostStore): ComponentType<PluginButtonCon
           Post the review as <Text style={{ color: verdictColor(props.theme, verdict), fontWeight: "600" }}>{verdict}</Text>?
         </Text>
         <Text style={styles.muted}>
-          {live} comment{live === 1 ? "" : "s"}
+          {posted} comment{posted === 1 ? "" : "s"}
+          {replies ? ` · ${replies} repl${replies === 1 ? "y" : "ies"} in existing threads` : ""}
+          {held ? ` · ${held} already raised, held back` : ""}
           {dropped ? ` · ${dropped} dropped` : ""}
           {draft.bodyOverride !== undefined ? " · your edited body" : ""}
         </Text>
-        {inBody ? (
+        {folded ? (
           <Text style={styles.warning}>
-            {inBody === live ? (live === 1 ? "It goes" : "They all go") : `${inBody} of them go${inBody === 1 ? "es" : ""}`} in the review body, not on a line of the diff.
+            {folded === posted ? (posted === 1 ? "It goes" : "They all go") : `${folded} of them go${folded === 1 ? "es" : ""}`} in the review body, not on a line of the diff.
           </Text>
         ) : null}
         {mismatch ? <Text style={styles.warning}>{mismatch}.</Text> : null}
