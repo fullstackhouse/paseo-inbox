@@ -110,6 +110,7 @@ export default function contribute(server: PluginServerContext) {
   let login: Promise<string> | null = null;
   const me = () => (login ??= whoami().catch((error) => ((login = null), Promise.reject(error))));
   const compare = (repo: string, base: string, head: string) => compareCommits(repo, base, head);
+  const draftFilesAt = filesAt((repo, number, sha) => prDetails.cachedFiles(repo, number, sha), compare);
   // An empty gh config for untrusted runs: gh there has no account to speak for.
   const emptyGh = join(dir, "untrusted-gh");
   mkdirSync(emptyGh, { recursive: true });
@@ -344,7 +345,7 @@ export default function contribute(server: PluginServerContext) {
   // The only paths from a review draft to GitHub: buttons on the review screen.
   server.handle(postReview, ({ runId }, { paseo: api }) => {
     capture(api);
-    return postDraft(inbox, reviews, runId, (repo, number, payload) => postPullReview(repo, number, payload), details, undefined, ghJson);
+    return postDraft(inbox, reviews, runId, (repo, number, payload) => postPullReview(repo, number, payload), details, undefined, ghJson, draftFilesAt);
   });
   server.handle(handoffReview, ({ runId, to, note, sendDraft }, { paseo: api }) => {
     capture(api);
@@ -352,7 +353,7 @@ export default function contribute(server: PluginServerContext) {
   });
   server.handle(reanchorReview, ({ runId }, { paseo: api }) => {
     capture(api);
-    return reanchorRun(inbox, reviews, runId, { details, filesAt: filesAt((repo, number, sha) => prDetails.cachedFiles(repo, number, sha), compare) });
+    return reanchorRun(inbox, reviews, runId, { details, filesAt: draftFilesAt });
   });
   server.handle(reviewSince, ({ runId }, { paseo: api }) => {
     capture(api);
@@ -360,7 +361,7 @@ export default function contribute(server: PluginServerContext) {
   });
   server.handle(previewReview, ({ runId }, { paseo: api }) => {
     capture(api);
-    return previewDraft(inbox, reviews, runId, details);
+    return previewDraft(inbox, reviews, runId, details, draftFilesAt);
   });
   server.handle(setReviewBody, ({ runId, body }, { paseo: api }) => {
     capture(api);

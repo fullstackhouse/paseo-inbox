@@ -54,6 +54,12 @@ const rpcChange = (change: CommentChange) => ("severity" in change ? { severity:
  * diff with the comments in place, the author's description and the comment list; a bottom bar that
  * picks the verdict and posts after a confirm, then moves on to the next review.
  */
+/** "drafted 3h ago", "drafted just now". */
+function ageLabel(what: string, iso: string): string {
+  const age = ago(iso);
+  return age === "now" ? `${what} just now` : `${what} ${age} ago`;
+}
+
 export function ReviewScreen({ theme, layout, navigation, params }: PluginScreenProps) {
   const { view, refresh } = useInbox(10_000);
   const [runId, setRunId] = useState(params.runId ?? "");
@@ -198,7 +204,8 @@ export function ReviewScreen({ theme, layout, navigation, params }: PluginScreen
 
   const headSha = details?.headSha ?? pr?.headSha;
   const stale = Boolean(draft && headSha && headSha !== draft.version);
-  const editable = Boolean(draft && !draft.postedUrl && run?.state === "needs-decision" && !stale);
+  // A draft the PR moved past stays postable: it posts on its own commit, where its comments were written.
+  const editable = Boolean(draft && !draft.postedUrl && (run?.state === "needs-decision" || run?.state === "stale"));
 
   const goTo = (offset: number) => {
     const next = queue[position + offset];
@@ -470,6 +477,7 @@ export function ReviewScreen({ theme, layout, navigation, params }: PluginScreen
                 {verdict} · {draft.confidence}%{draft.verdictOverride ? " (yours)" : ""}
               </Pill>
             ) : null}
+            {draft ? <Pill theme={theme} color={theme.colors.foregroundMuted}>{ageLabel("drafted", draft.createdAt)}{draft.reanchored ? ` · ${ageLabel("moved", draft.reanchored.at)}` : ""}</Pill> : null}
             {drafting ? <Pill theme={theme} color={theme.colors.foregroundMuted}>{run.state === "queued" ? "queued" : "drafting…"}</Pill> : null}
             {stale ? <Pill theme={theme} color={theme.colors.statusWarning}>new commits since this draft</Pill> : null}
             {draft?.reviewedVersion && draft.reviewedVersion !== draft.version ? <Pill theme={theme} color={theme.colors.foregroundMuted}>summary written for {draft.reviewedVersion.slice(0, 7)}</Pill> : null}
@@ -483,7 +491,7 @@ export function ReviewScreen({ theme, layout, navigation, params }: PluginScreen
           {stale && run.state !== "running" ? (
             <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
               <Text style={{ ...muted, flex: 1, minWidth: 220 }}>
-                The PR moved on since this was drafted ({draft?.version.slice(0, 7)} → {headSha?.slice(0, 7)}). Move the comments to the new head to keep your decisions (no AI run; the summary stays as written), or re-draft from scratch.
+                The PR moved on since this was drafted ({draft?.version.slice(0, 7)} → {headSha?.slice(0, 7)}). Move the comments to the new head to keep your decisions (no AI run; the summary stays as written), re-draft from scratch, or post it as is on {draft?.version.slice(0, 7)}.
               </Text>
               {draft && !draft.postedUrl ? <Chip theme={theme} active label={busy === "reanchor" ? "Moving…" : "Move comments to the new head"} disabled={Boolean(busy)} onPress={() => void carry()} /> : null}
               <Chip theme={theme} label={busy === "redraft" ? "Re-drafting…" : "Re-draft at the new head"} disabled={Boolean(busy)} onPress={() => void rerun()} />
@@ -728,7 +736,7 @@ export function ReviewScreen({ theme, layout, navigation, params }: PluginScreen
             </View>
             <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
               <Text style={{ ...muted, flex: 1 }} numberOfLines={2}>
-                {stale ? "Move the comments or re-draft before posting." : `${live.length} comment${live.length === 1 ? "" : "s"}${folded ? ` (${folded} in the body)` : ""}${draft.comments.length > live.length ? ` · ${draft.comments.length - live.length} dropped` : ""}`}
+                {stale ? `Posts on ${draft.version.slice(0, 7)}, where it was drafted; GitHub marks comments outdated where the code changed since. ` : ""}{`${live.length} comment${live.length === 1 ? "" : "s"}${folded ? ` (${folded} in the body)` : ""}${draft.comments.length > live.length ? ` · ${draft.comments.length - live.length} dropped` : ""}`}
               </Text>
               <Pressable
                 accessibilityRole="button"

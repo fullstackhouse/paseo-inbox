@@ -1,11 +1,23 @@
-import { composeReview, effectiveVerdict, type PrDetails } from "../shared/review";
+import { composeReview, effectiveVerdict, type PrDetails, type PrFile, type ReviewDraft } from "../shared/review";
 import type { Inbox } from "./inbox";
 import type { ReviewStore } from "./reviews";
 
 export type Poster = (repo: string, number: number, payload: unknown) => Promise<string>;
 export type Details = (repo: string, number: number) => Promise<PrDetails>;
+/** The PR's files at an earlier head, or null when that's no longer known. */
+export type FilesAt = (repo: string, number: number, sha: string, live: PrDetails) => Promise<PrFile[] | null>;
 /** `gh api` with a JSON body on stdin; returns stdout. */
 export type GhJson = (args: string[], body: unknown) => Promise<string>;
+
+/**
+ * The diff a draft's comments are placed against: the live one, or for a draft the PR has moved past,
+ * the diff at the draft's own commit (the review posts with that commit id, so GitHub anchors the
+ * comments there and marks them outdated where the code changed). Unknown old diff: all go in the body.
+ */
+async function draftFiles(draft: ReviewDraft, pr: { repo: string; number: number }, live: PrDetails, filesAt?: FilesAt): Promise<readonly PrFile[]> {
+  if (live.headSha === draft.version) return live.files;
+  return (await filesAt?.(pr.repo, pr.number, draft.version, live).catch(() => null)) ?? [];
+}
 
 function context(inbox: Inbox, reviews: ReviewStore, runId: string) {
   const run = inbox.run(runId);
@@ -18,13 +30,13 @@ function context(inbox: Inbox, reviews: ReviewStore, runId: string) {
 }
 
 /** Exactly what Post would send, against GitHub's live head and diff. */
-export async function previewDraft(inbox: Inbox, reviews: ReviewStore, runId: string, details: Details) {
+export async function previewDraft(inbox: Inbox, reviews: ReviewStore, runId: string, details: Details, filesAt?: FilesAt) {
   const run = inbox.run(runId);
   const draft = reviews.get(runId);
   const item = run ? inbox.item(run.itemKey) : null;
   if (!run || !draft || !item) throw new Error("No review draft for this run");
   const live = await details(item.pr.repo, item.pr.number);
-  const composed = composeReview(draft, live.files);
+  const composed = composeReview(draft, await draftFiles(draft, item.pr, live, filesAt));
   return {
     event: composed.payload.event,
     body: composed.payload.body,
@@ -39,15 +51,14 @@ export async function previewDraft(inbox: Inbox, reviews: ReviewStore, runId: st
 
 /**
  * Posts a run's review draft. Called only from the review screen's button, so a human press is the
- * only way a review reaches GitHub. Checks GitHub's live head (not the last poll), refuses a draft the
- * PR has moved past or one already posted, folds comments that can't go inline into the body, and
- * posts already-raised findings the human chose to reply with as replies in their threads.
+ * only way a review reaches GitHub. Refuses a draft already posted; a draft the PR has moved past posts
+ * on its own commit (see draftFiles). Folds comments that can't go inline into the body, and posts
+ * already-raised findings the human chose to reply with as replies in their threads.
  */
-export async function postDraft(inbox: Inbox, reviews: ReviewStore, runId: string, post: Poster, details: Details, now = new Date().toISOString(), ghJson?: GhJson) {
+export async function postDraft(inbox: Inbox, reviews: ReviewStore, runId: string, post: Poster, details: Details, now = new Date().toISOString(), ghJson?: GhJson, filesAt?: FilesAt) {
   const { draft, pr } = context(inbox, reviews, runId);
   const live = await details(pr.repo, pr.number);
-  if (live.headSha !== draft.version) throw new Error(`The PR got new commits since this draft (${draft.version.slice(0, 7)} → ${live.headSha.slice(0, 7)}); re-draft it`);
-  const { payload, inline, folded, replies } = composeReview(draft, live.files);
+  const { payload, inline, folded, replies } = composeReview(draft, await draftFiles(draft, pr, live, filesAt));
   const url = await post(pr.repo, pr.number, payload);
   reviews.save({ ...draft, postedAt: now, postedUrl: url, postedVerdict: effectiveVerdict(draft) });
   inbox.markPosted(runId, url);
