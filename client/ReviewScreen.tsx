@@ -708,7 +708,13 @@ export function ReviewScreen({ theme, layout, navigation, params }: PluginScreen
                   disabled={!editable}
                   style={small}
                   textStyle={{ fontSize: 12 }}
-                  onPress={() => void act("verdict", async () => setDraft(await setVerdict({ runId, verdict: option })))}
+                  onPress={() =>
+                    void act("verdict", async () => {
+                      setDraft(await setVerdict({ runId, verdict: option }));
+                      // The chat's Post pill names the verdict.
+                      await refresh();
+                    })
+                  }
                 />
               ))}
               <View style={{ flex: 1 }} />

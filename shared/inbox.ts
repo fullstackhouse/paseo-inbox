@@ -1,6 +1,6 @@
 import { defineRpc } from "@getpaseo/plugin";
 import { z } from "zod";
-import { REVIEW_TOOL } from "./review";
+import { REVIEW_TOOL, VerdictSchema, type Verdict } from "./review";
 
 // ---------- Config (~/.paseo/inbox.json) ----------
 
@@ -399,6 +399,8 @@ export const InboxViewSchema = z.object({
   reviewRules: z.array(z.string()).optional(),
   /** Settled runs (dismissed, stale, done) that still have a saved review draft, so they reopen it. */
   drafts: z.array(z.string()).optional(),
+  /** Runs waiting on the human with a draft, and the verdict it posts as. */
+  postable: z.record(z.string(), VerdictSchema).optional(),
 });
 export type InboxView = z.infer<typeof InboxViewSchema>;
 
@@ -446,19 +448,18 @@ export function reviewRunFor(runs: readonly Run[], view: Pick<InboxView, "review
 }
 
 /**
- * The composer pill on an inbox agent's chat, or null while its run has no draft to open. The agent's
- * latest run counts: a review moved to a new head keeps the agent.
+ * The composer pills on an inbox agent's chat, or null while its run has no draft to open. The agent's
+ * latest run counts: a review moved to a new head keeps the agent. `postAs` is set while the draft
+ * can be posted, for the pill that posts it; the open pill names no verdict, so it can't read as one.
  */
-export function reviewPill(runs: readonly Run[], view: Pick<InboxView, "drafts"> | null, agentId: string): { runId: string; label: string } | null {
+export function reviewPill(runs: readonly Run[], view: Pick<InboxView, "drafts" | "postable"> | null, agentId: string): { runId: string; label: string; postAs: Verdict | null } | null {
   const run = [...runs].reverse().find((candidate) => candidate.agentId === agentId);
   if (!run) return null;
-  const verdict = /^review drafted: (\S+)/.exec(run.reason ?? "")?.[1];
-  if (verdict) return { runId: run.id, label: `Review · ${verdict}` };
-  if (run.reason?.startsWith("review posted")) return { runId: run.id, label: "Review posted" };
+  const postAs = view?.postable?.[run.id] ?? null;
+  if (run.reason?.startsWith("review posted")) return { runId: run.id, label: "Review posted", postAs: null };
   // Not every "review …" reason: a requeued run reads "review requested again" while it drafts anew.
-  const backOrMoved = run.reason?.startsWith("review moved") || run.reason?.endsWith(DRAFT_BACK);
-  if (backOrMoved || view?.drafts?.includes(run.id)) return { runId: run.id, label: "Review" };
-  return null;
+  const opens = run.reason?.startsWith("review drafted") || run.reason?.startsWith("review moved") || run.reason?.endsWith(DRAFT_BACK) || view?.drafts?.includes(run.id) || postAs !== null;
+  return opens ? { runId: run.id, label: "Open review", postAs } : null;
 }
 
 /** `https://github.com/o/r/pull/12` or `o/r#12` → repo and number. */

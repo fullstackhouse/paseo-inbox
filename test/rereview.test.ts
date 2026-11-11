@@ -10,7 +10,7 @@ import { ReviewStore } from "../server/reviews";
 import { callTool } from "../server/tools";
 import { DISMISSED, plan, reopen, runId, setRun, type Pr, type State } from "../shared/inbox";
 import { anchorAt, askedAgain, locate, reanchorDraft, sideLines, sinceBase, sinceChanges, type Compare, type ReviewRequest } from "../shared/rereview";
-import { composeReview, toDraft, updateComment, ReviewInputSchema, type PrDetails, type PrFile } from "../shared/review";
+import { composeReview, effectiveVerdict, toDraft, updateComment, ReviewInputSchema, type PrDetails, type PrFile } from "../shared/review";
 import { config, emptyState, later, NOW, pr } from "./fixtures";
 
 const PATH = "src/basket/BasketPage.tsx";
@@ -177,7 +177,7 @@ async function drafted(overrides: Partial<InboxDeps> = {}, results: () => Pr[] =
     now: () => later(clock++),
     draftOf: (id) => {
       const draft = reviews.get(id);
-      return draft ? { posted: Boolean(draft.postedUrl) } : null;
+      return draft ? { posted: Boolean(draft.postedUrl), verdict: effectiveVerdict(draft) } : null;
     },
     ...overrides,
   });
@@ -187,6 +187,26 @@ async function drafted(overrides: Partial<InboxDeps> = {}, results: () => Pr[] =
 }
 
 const details = (headSha: string, files: PrFile[]): PrDetails => ({ body: "", author: "ola", baseRef: "main", headRef: "x", headSha, additions: 1, deletions: 0, changedFiles: files.length, createdAt: NOW, files, threads: [], title: "t", requestedReviewers: [] });
+
+describe("postable drafts", () => {
+  it("lists a draft waiting on the human with the verdict it posts as, until it is posted", async () => {
+    const { inbox, reviews, runId: id } = await drafted();
+    expect(inbox.view().postable).toEqual({ [id]: "approve" });
+    reviews.save({ ...reviews.get(id)!, verdictOverride: "comment" });
+    expect(inbox.view().postable).toEqual({ [id]: "comment" });
+    await postDraft(inbox, reviews, id, async () => "https://github.com/acme/shop/pull/7#pullrequestreview-1", async () => details(A, [file(OLD)]), NOW);
+    expect(inbox.view().postable).toEqual({});
+  });
+
+  it("drops the draft once a push makes its run stale", async () => {
+    let head = A;
+    const { inbox, runId: id } = await drafted({}, () => [pr({ headSha: head })]);
+    expect(Object.keys(inbox.view().postable ?? {})).toEqual([id]);
+    head = B;
+    await inbox.poll();
+    expect(inbox.view().postable).toEqual({});
+  });
+});
 
 describe("reanchorRun", () => {
   it("moves the run to the live head, so Post sends the new commit; refuses when there's nothing to move", async () => {
