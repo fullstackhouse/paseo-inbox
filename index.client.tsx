@@ -2,6 +2,7 @@ import type { PluginClientContext, PluginSidebarItemProps } from "@getpaseo/plug
 import { SidebarRow } from "@getpaseo/plugin/client/ui";
 import { Text } from "react-native";
 import { INBOX_SCREEN, InboxScreen } from "./client/InboxScreen";
+import { DraftChangeCard } from "./client/DraftChangeCard";
 import { setOpenScreen } from "./client/nav";
 import { REVIEW_CARD, ReviewCard, ReviewCardSchema } from "./client/ReviewCard";
 import { contributeReviewPills } from "./client/reviewPills";
@@ -10,6 +11,7 @@ import { REVIEW_SCREEN, ReviewScreen } from "./client/ReviewScreen";
 import { observeSnoozedWorkspaces, useSnoozedWorkspaceIds } from "./client/snoozed";
 import { useInbox } from "./client/useInbox";
 import { needsDecisionCount } from "./shared/inbox";
+import { DRAFT_CARD, DraftCardSchema, draftCardFor } from "./shared/timeline";
 
 /** The FSH host's needs-input orange; older hosts only have the status warning. */
 function attentionColor(theme: PluginSidebarItemProps["theme"]): string {
@@ -37,6 +39,16 @@ export default function contribute(client: PluginClientContext) {
   client.addSettingsScreen({ id: "inbox", title: "Inbox", icon: "Inbox", Component: InboxSettings });
   // Older chats still hold the "Review draft ready" card; new drafts get a composer pill instead.
   client.addTimelineRenderer({ kind: REVIEW_CARD, version: 1, schema: ReviewCardSchema, Component: ReviewCard });
+  // A draft or revise tool call reads as what it changed in the draft: comments added, edited, removed.
+  client.addTimelineTransformer({
+    id: "draft-changes",
+    query: { itemType: "tool_call" },
+    transform: ({ item }) => {
+      const data = draftCardFor(item);
+      return data && { items: [{ type: "plugin", ...DRAFT_CARD, data }] };
+    },
+  });
+  client.addTimelineRenderer({ ...DRAFT_CARD, schema: DraftCardSchema, Component: DraftChangeCard });
   client.addCommandCenterItem({ id: "settings", title: "Inbox settings", icon: "Settings", context: "global", onSelect: ({ openSettings }) => openSettings("inbox") });
   client.addSidebarHeaderItem({ id: INBOX_SCREEN, title: "Inbox", Component: InboxItem });
   const stopPills = contributeReviewPills(client);
