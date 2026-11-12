@@ -45,7 +45,8 @@ export function DraftChangeCard({ item, theme, layout, agentId }: PluginTimeline
         )}
         {!card.verdict && card.confidence !== null && <Pill theme={theme} color={theme.colors.foregroundMuted}>{`${card.confidence}%`}</Pill>}
       </View>
-      {card.headline && <Text style={styles.headline}>{card.headline}</Text>}
+      {/* "approve · 85% · 1 nit": the pill already shows the verdict and confidence. */}
+      {card.headline && <Text style={styles.headline}>{card.verdict ? card.headline.split(" · ").slice(2).join(" · ") : card.headline}</Text>}
       {changes.map((change, index) => (
         <ChangeRow key={`${change.op}-${"id" in change ? change.id : ""}-${index}`} change={change} styles={styles} theme={theme} />
       ))}

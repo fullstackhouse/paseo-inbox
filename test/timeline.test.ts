@@ -55,6 +55,12 @@ describe("draftCardFor", () => {
     expect(DraftCardSchema.parse(card)).toEqual(card);
   });
 
+  it("reads the output Paseo wraps in an object", () => {
+    const card = draftCardFor(call("mcp__inbox__inbox_review_revise", { verdict: "request-changes", edit: [{ id: "c2", severity: "blocker" }] }, { output: "Applied: edited c2, set verdict." }));
+    expect(card?.verdict).toBe("request-changes");
+    expect(card?.changes).toEqual([{ op: "edit", id: "c2", severity: "blocker" }]);
+  });
+
   it("keeps a regrade to a note distinct from an unchanged grade", () => {
     const card = draftCardFor(call("mcp__inbox__inbox_review_revise", { edit: [{ id: "c1", severity: null }] }, "Applied: edited c1."));
     expect(card?.changes).toEqual([{ op: "edit", id: "c1", severity: null }]);

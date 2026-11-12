@@ -53,11 +53,15 @@ function added(raw: RawComment, id: string | null): DraftChange | null {
   return path && body ? { op: "add", id, path, line: num(raw.line), severity: severity(raw.severity), body } : null;
 }
 
-/** The output is a string or an MCP content array depending on the provider; read it as text. */
+/** The output is a string, an MCP content array, or an object holding one, depending on the provider; read its text. */
 function outputText(output: unknown): string {
   if (typeof output === "string") return output;
-  const parts = list(output).map((part) => str((part as { text?: unknown } | null)?.text)).filter((text): text is string => text !== null);
-  return parts.length ? parts.join("\n") : JSON.stringify(output ?? "");
+  if (Array.isArray(output)) return output.map(outputText).filter(Boolean).join("\n");
+  if (output && typeof output === "object") {
+    const { text, content, output: inner } = output as { text?: unknown; content?: unknown; output?: unknown };
+    return [text, content, inner].map(outputText).filter(Boolean).join("\n");
+  }
+  return "";
 }
 
 /** The card to show instead of a draft/revise tool call, or undefined to keep the row as it is (running, failed, other tools). */
