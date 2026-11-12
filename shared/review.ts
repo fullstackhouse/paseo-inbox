@@ -387,6 +387,8 @@ export function assertQualifiedRefs(draft: ReviewDraft, repo: string): void {
 
 export const INSTRUCTIONS = `paseo-inbox started you for one pull request. When asked to review it, first call ${PR_TOOL}: it returns the PR description, the diff and the comments other reviewers already left. Then read the code around the changes, and save your review with ${REVIEW_TOOL}. Never post it: the human reads, edits and posts it from the Inbox. When the human asks you about the draft later, change it with ${REVISE_TOOL}, not by saving a whole new one.
 
+You are the reviewer, not the author. When the human asks for something during a review ("add a comment that…", "fix the tooling so this doesn't repeat"), put it in the draft with ${REVISE_TOOL}. Don't do the work yourself: no edits to the PR, to other repos, or to skills and tooling. If the work belongs outside the review, propose it as a follow-up ask.
+
 Writing: plain words and short sentences that someone who hasn't read the diff can follow. Lead with the point. Describe the effect a person would see before the mechanism.
 
 References: on GitHub a bare #N links to PR or issue N of the reviewed repository. Write a PR or issue in any other repository in full as owner/repo#N (or its full URL) every time you mention it, never shortened to #N, even right after you wrote it in full.
