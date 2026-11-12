@@ -1,5 +1,8 @@
 import type { PluginScreenProps } from "@getpaseo/plugin/client";
 import { useRpc } from "@getpaseo/plugin/client";
+import { useQuery } from "@tanstack/react-query";
+import { getPrUpstream } from "../shared/upstream";
+import { GitHubTab } from "./GitHubTab";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Pressable, ScrollView, Text, View } from "react-native";
 import { addPr, DISMISSED, parsePrRef, restoreRun, reviewRunFor, runNow, skipRun, type Run } from "../shared/inbox";
@@ -40,7 +43,7 @@ import { useInbox } from "./useInbox";
 
 export const REVIEW_SCREEN = "review";
 
-type Tab = "summary" | "walkthrough" | "since" | "files" | "description" | "comments" | "preview";
+type Tab = "summary" | "walkthrough" | "since" | "files" | "description" | "github" | "comments" | "preview";
 
 /** Runs whose review draft is waiting for the human, newest first: the prev/next order. */
 export const reviewQueue = (runs: readonly Run[]) =>
@@ -77,6 +80,7 @@ export function ReviewScreen({ theme, layout, navigation, params }: PluginScreen
   const fetchDraft = useRpc(getReview);
   const restoreDraft = useRpc(restoreRun);
   const fetchDetails = useRpc(getPrDetails);
+  const fetchUpstream = useRpc(getPrUpstream);
   const changeComment = useRpc(updateReviewComment);
   const addComment = useRpc(addReviewComment);
   const deleteComment = useRpc(deleteReviewComment);
@@ -105,6 +109,14 @@ export function ReviewScreen({ theme, layout, navigation, params }: PluginScreen
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>("summary");
+  const upstream = useQuery({
+    queryKey: ["inbox.pr_upstream", run?.itemKey, pr?.headSha, draft?.postedUrl],
+    queryFn: () => fetchUpstream({ itemKey: run!.itemKey }),
+    enabled: tab === "github" && Boolean(run),
+    staleTime: 0,
+    retry: false,
+    refetchOnWindowFocus: false,
+  });
   const [openFiles, setOpenFiles] = useState<Set<string>>(new Set());
   const [closedChapters, setClosedChapters] = useState<Set<number>>(new Set());
   const [busy, setBusy] = useState<string | null>(null);
@@ -386,7 +398,8 @@ export function ReviewScreen({ theme, layout, navigation, params }: PluginScreen
     ...(since && since.kind !== "none" ? [{ id: "since" as const, label: `Since ${since.base.slice(0, 7)}${since.kind === "changes" ? ` · ${since.files.length}` : ""}` }] : []),
     { id: "files", label: `Files ${details ? files.length : pr.files.length}` },
     { id: "description", label: "Description" },
-    { id: "comments", label: `Comments ${live.length}` },
+    { id: "github", label: "GitHub" },
+    { id: "comments", label: `Your comments ${live.length}` },
     ...(draft && !draft.postedUrl ? [{ id: "preview" as const, label: draft.bodyOverride !== undefined ? "Preview (edited)" : "Preview" }] : []),
   ];
 
@@ -471,8 +484,10 @@ export function ReviewScreen({ theme, layout, navigation, params }: PluginScreen
             {"  ·  "}
             <Text style={{ color: theme.colors.statusSuccess }}>+{details?.additions ?? pr.additions}</Text> <Text style={{ color: theme.colors.statusDanger }}>−{details?.deletions ?? pr.deletions}</Text>
             {`  ·  ${details?.changedFiles ?? pr.files.length} files`}
-            {pr.checks !== "none" ? "  ·  checks " : ""}
-            {pr.checks !== "none" ? <Text style={{ color: pr.checks === "passing" ? theme.colors.statusSuccess : pr.checks === "failing" ? theme.colors.statusDanger : theme.colors.statusWarning }}>{pr.checks}</Text> : null}
+            {"  ·  "}
+            <Text accessibilityRole="button" accessibilityLabel={`Open GitHub checks: ${pr.checks}`} onPress={() => setTab("github")} style={{ color: pr.checks === "passing" ? theme.colors.statusSuccess : pr.checks === "failing" ? theme.colors.statusDanger : pr.checks === "pending" ? theme.colors.statusWarning : theme.colors.foregroundMuted }}>
+              {pr.checks === "none" ? "No checks" : `checks ${pr.checks}`}
+            </Text>
             {pr.isDraft ? "  ·  draft PR" : ""}
           </Text>
           <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
@@ -522,7 +537,7 @@ export function ReviewScreen({ theme, layout, navigation, params }: PluginScreen
 
         {/* Content */}
         <View onLayout={(event) => (contentY.current = event.nativeEvent.layout.y)} style={{ paddingHorizontal: pad, paddingTop: 14, gap: 12, width: "100%", maxWidth, alignSelf: "center" }}>
-          {!draft && tab !== "description" && tab !== "files" ? (
+          {!draft && tab !== "description" && tab !== "files" && tab !== "github" ? (
             drafting ? (
               <View style={{ gap: 10, alignItems: "flex-start", backgroundColor: theme.colors.surface1, borderRadius: 10, padding: 14 }}>
                 <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
@@ -652,6 +667,10 @@ export function ReviewScreen({ theme, layout, navigation, params }: PluginScreen
             ) : (
               <ActivityIndicator color={theme.colors.foregroundMuted} />
             )
+          ) : null}
+
+          {tab === "github" ? (
+            <GitHubTab key={run.itemKey} data={upstream.data} error={upstream.error} loading={upstream.isFetching} onRefresh={() => void upstream.refetch()} url={pr.url} theme={theme} />
           ) : null}
 
           {tab === "preview" && draft ? (
