@@ -354,11 +354,42 @@ export function verdictMismatch(draft: ReviewDraft): string | null {
   return null;
 }
 
+const CODE = /```[\s\S]*?```|`[^`\n]*`/g;
+const QUALIFIED_REF = /(?:https?:\/\/github\.com\/([\w.-]+\/[\w.-]+)\/(?:pull|issues)\/(\d+))|(?<![\w/.-])([\w.-]+\/[\w.-]+)#(\d+)\b/g;
+const BARE_REF = /(?<![\w/&#])#(\d+)\b/g;
+
+/**
+ * Bare `#N` references in the reviewer's own text that the same draft writes elsewhere as another
+ * repository's `owner/repo#N` (or its URL). GitHub links a bare `#N` to the reviewed repo, so these
+ * point at the wrong PR. Code spans are skipped: GitHub doesn't link inside them.
+ */
+export function crossRepoBareRefs(draft: Pick<ReviewDraft, "summary" | "reasoning" | "chapters" | "comments">, repo: string): string[] {
+  const texts = [draft.summary, draft.reasoning, ...draft.chapters.map((chapter) => chapter.body), ...draft.comments.filter((comment) => comment.author === "ai" && comment.status !== "dropped").map((comment) => comment.body)].map((text) => text.replace(CODE, ""));
+  const elsewhere = new Map<string, string>();
+  for (const text of texts)
+    for (const match of text.matchAll(QUALIFIED_REF)) {
+      const [owner, number] = match[1] ? [match[1], match[2]!] : [match[3]!, match[4]!];
+      if (owner.toLowerCase() !== repo.toLowerCase() && !elsewhere.has(number)) elsewhere.set(number, `${owner}#${number}`);
+    }
+  const bare = new Set(texts.flatMap((text) => [...text.matchAll(BARE_REF)].map((match) => match[1]!)));
+  return [...elsewhere].filter(([number]) => bare.has(number)).map(([, ref]) => ref);
+}
+
+/** Refuses a draft whose bare `#N` means another repository's PR; the message tells the reviewer how to write it. */
+export function assertQualifiedRefs(draft: ReviewDraft, repo: string): void {
+  const refs = crossRepoBareRefs(draft, repo);
+  if (!refs.length) return;
+  const list = refs.map((ref) => `${ref.slice(ref.indexOf("#"))} (written elsewhere as ${ref})`).join(", ");
+  throw new Error(`Not saved: the draft writes ${list} as a bare #N too. On GitHub a bare #N links to ${repo}'s #N. Write the other repository's reference in full every time; if a bare one really means ${repo}, write it as ${repo}#N.`);
+}
+
 // ---------- Agent instructions and tools ----------
 
 export const INSTRUCTIONS = `paseo-inbox started you for one pull request. When asked to review it, first call ${PR_TOOL}: it returns the PR description, the diff and the comments other reviewers already left. Then read the code around the changes, and save your review with ${REVIEW_TOOL}. Never post it: the human reads, edits and posts it from the Inbox. When the human asks you about the draft later, change it with ${REVISE_TOOL}, not by saving a whole new one.
 
 Writing: plain words and short sentences that someone who hasn't read the diff can follow. Lead with the point. Describe the effect a person would see before the mechanism.
+
+References: on GitHub a bare #N links to PR or issue N of the reviewed repository. Write a PR or issue in any other repository in full as owner/repo#N (or its full URL) every time you mention it, never shortened to #N, even right after you wrote it in full.
 
 summary (markdown): what the PR does and why, general to specific. Always use these ### sections in order, each opening with its emoji, and leave out any with nothing real in them: 🎯 the problem (no identifiers), 🔧 the fix, 🔍 details, ⚠️ worth knowing. Describe the PR, not your review of it.
 
@@ -404,7 +435,7 @@ export const TOOLS = [
   },
   {
     name: REVIEW_TOOL,
-    description: "Save your review of this PR as a draft for the human to read, edit and post. Saving again keeps every comment the human wrote or decided on. Refused once the review is posted.",
+    description: "Save your review of this PR as a draft for the human to read, edit and post. Saving again keeps every comment the human wrote or decided on. Write a PR or issue in another repository as owner/repo#N every time: a bare #N links to the reviewed repository. Refused once the review is posted, or when a bare #N is written elsewhere in the draft as another repository's owner/repo#N.",
     inputSchema: {
       type: "object",
       properties: {
@@ -420,7 +451,7 @@ export const TOOLS = [
   },
   {
     name: REVISE_TOOL,
-    description: "Change the saved draft in answer to the human: set verdict/confidence/reasoning/summary/chapters, edit or drop comments by id, add comments. Changes to comments the human wrote or decided on are refused and reported back.",
+    description: "Change the saved draft in answer to the human: set verdict/confidence/reasoning/summary/chapters, edit or drop comments by id, add comments. Changes to comments the human wrote or decided on are refused and reported back. As with the draft, another repository's PR or issue is always owner/repo#N, never a bare #N.",
     inputSchema: {
       type: "object",
       properties: {
