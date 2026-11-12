@@ -12,6 +12,7 @@ const CommentSchema = z.object({
 export const PrUpstreamSchema = z.object({
   fetchedAt: z.string(),
   headSha: z.string(),
+  state: z.enum(["open", "draft", "merged", "closed"]),
   checks: z.array(
     z.object({
       id: z.string(),
@@ -30,7 +31,7 @@ export const PrUpstreamSchema = z.object({
       line: z.number().nullable(),
       resolved: z.boolean(),
       outdated: z.boolean(),
-      comments: z.array(CommentSchema),
+      comments: z.array(CommentSchema.extend({ reviewId: z.string().nullable() })),
     }),
   ),
 });

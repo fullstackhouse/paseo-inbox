@@ -27,7 +27,7 @@ const ThreadComment = z.object({
   body: z.string(),
   url: z.string(),
   createdAt: z.string(),
-  pullRequestReview: z.object({ state: z.string() }).nullable(),
+  pullRequestReview: z.object({ state: z.string(), databaseId: z.number().nullable() }).nullable(),
 });
 const Thread = z.object({
   id: z.string(),
@@ -69,7 +69,8 @@ const CHECKS_QUERY = `query InboxChecks($owner: String!, $name: String!, $sha: G
     } }
   } } }
 }`;
-const COMMENT_FIELDS = "id author { login } body url createdAt pullRequestReview { state }";
+const COMMENT_FIELDS =
+  "id author { login } body url createdAt pullRequestReview { state databaseId }";
 const THREADS_QUERY = `query InboxThreads($owner: String!, $name: String!, $number: Int!, $cursor: String) {
   repository(owner: $owner, name: $name) { pullRequest(number: $number) {
     reviewThreads(first: 100, after: $cursor) {
@@ -206,6 +207,10 @@ async function threadsFor(repo: string, number: number, run: Gh): Promise<PrUpst
         body: comment.body,
         url: comment.url,
         at: comment.createdAt,
+        reviewId:
+          comment.pullRequestReview?.databaseId == null
+            ? null
+            : String(comment.pullRequestReview.databaseId),
       }));
     if (published.length)
       result.push({
@@ -226,10 +231,28 @@ export async function fetchPrUpstream(
   number: number,
   run: Gh = gh,
 ): Promise<PrUpstream> {
-  const { headRefOid: headSha } = z
-    .object({ headRefOid: z.string() })
+  const {
+    headRefOid: headSha,
+    state,
+    isDraft,
+  } = z
+    .object({
+      headRefOid: z.string(),
+      state: z.enum(["OPEN", "CLOSED", "MERGED"]),
+      isDraft: z.boolean(),
+    })
     .parse(
-      JSON.parse(await run(["pr", "view", String(number), "--repo", repo, "--json", "headRefOid"])),
+      JSON.parse(
+        await run([
+          "pr",
+          "view",
+          String(number),
+          "--repo",
+          repo,
+          "--json",
+          "headRefOid,state,isDraft",
+        ]),
+      ),
     );
   const [checks, threads, reviewPages, commentPages] = await Promise.all([
     checksFor(repo, headSha, run),
@@ -240,6 +263,8 @@ export async function fetchPrUpstream(
   return {
     fetchedAt: new Date().toISOString(),
     headSha,
+    state:
+      state === "MERGED" ? "merged" : state === "CLOSED" ? "closed" : isDraft ? "draft" : "open",
     checks,
     threads,
     reviews: z

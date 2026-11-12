@@ -3,13 +3,26 @@ import { GithubSource, PrDetailsCache, queryArgs, summarizeChecks } from "../ser
 
 import { fetchPrUpstream } from "../server/upstream";
 import { PrUpstreamSchema } from "../shared/upstream";
+import { pullRequestPanelData } from "../client/pullRequestPanelData";
 
 describe("summarizeChecks", () => {
   it("prefers failing, then pending, then passing", () => {
     expect(summarizeChecks([])).toBe("none");
-    expect(summarizeChecks([{ status: "COMPLETED", conclusion: "SUCCESS" }, { status: "COMPLETED", conclusion: "SKIPPED" }])).toBe("passing");
-    expect(summarizeChecks([{ status: "IN_PROGRESS", conclusion: null }, { status: "COMPLETED", conclusion: "SUCCESS" }])).toBe("pending");
-    expect(summarizeChecks([{ status: "IN_PROGRESS" }, { status: "COMPLETED", conclusion: "FAILURE" }])).toBe("failing");
+    expect(
+      summarizeChecks([
+        { status: "COMPLETED", conclusion: "SUCCESS" },
+        { status: "COMPLETED", conclusion: "SKIPPED" },
+      ]),
+    ).toBe("passing");
+    expect(
+      summarizeChecks([
+        { status: "IN_PROGRESS", conclusion: null },
+        { status: "COMPLETED", conclusion: "SUCCESS" },
+      ]),
+    ).toBe("pending");
+    expect(
+      summarizeChecks([{ status: "IN_PROGRESS" }, { status: "COMPLETED", conclusion: "FAILURE" }]),
+    ).toBe("failing");
     expect(summarizeChecks([{ state: "ERROR" }])).toBe("failing");
     expect(summarizeChecks([{ state: "PENDING" }])).toBe("pending");
   });
@@ -33,7 +46,7 @@ describe("fetchPrUpstream", () => {
     body: id,
     url: `https://github.com/acme/shop/pull/7#${id}`,
     createdAt: "2026-11-12T10:00:00Z",
-    pullRequestReview: { state },
+    pullRequestReview: { state, databaseId: 123 },
   });
   const thread = (id: string, comments = page([threadComment(id)])) => ({
     id,
@@ -60,7 +73,8 @@ describe("fetchPrUpstream", () => {
     targetUrl: null,
   });
   const empty = async (args: string[]) => {
-    if (args[0] === "pr") return JSON.stringify({ headRefOid: "abc" });
+    if (args[0] === "pr")
+      return JSON.stringify({ headRefOid: "abc", state: "OPEN", isDraft: false });
     const query = args.find((arg) => arg.startsWith("query=")) ?? "";
     if (query.includes("InboxChecks"))
       return JSON.stringify({
@@ -193,7 +207,38 @@ describe("fetchPrUpstream", () => {
     const result = await fetchPrUpstream("acme/shop", 7, run);
     expect(result.threads.map((item) => item.id)).toEqual(["long", "resolved"]);
     expect(result.threads[0]?.comments.map((item) => item.id)).toEqual(["first", "second"]);
+    expect(result.threads[0]?.comments[0]?.reviewId).toBe("123");
     expect(result.threads[1]).toMatchObject({ resolved: true, outdated: true, line: null });
+    const panel = pullRequestPanelData(
+      { number: 7, title: "Change", url: "https://github.com/acme/shop/pull/7", repo: "acme/shop" },
+      {
+        ...result,
+        reviews: [
+          {
+            id: "123",
+            author: "ola",
+            state: "CHANGES_REQUESTED",
+            body: "Fix this",
+            url: "https://github.com/acme/shop/pull/7#review-123",
+            at: "2026-11-12T10:00:00Z",
+          },
+        ],
+      },
+    );
+    const review = panel.activity.find((item) => item.kind === "review")!;
+    const root = panel.activity.find((item) => item.threadId === "long")!;
+    expect(root.reviewId).toBe(review.id);
+    expect(review.reviewState).toBe("changes_requested");
+    expect(root.location).toMatchObject({
+      path: "file.ts",
+      line: 4,
+      isResolved: false,
+      isOutdated: false,
+    });
+    expect(panel.activity.find((item) => item.threadId === "resolved")?.location).toMatchObject({
+      isResolved: true,
+      isOutdated: true,
+    });
   });
 
   it("refetches unchanged heads and handles a PR without checks", async () => {
@@ -236,7 +281,11 @@ describe("fetchPrUpstream", () => {
 
 describe("queryArgs", () => {
   it("keeps quoted qualifier values together", () => {
-    expect(queryArgs('is:open label:"needs qa" org:acme')).toEqual(["is:open", "label:needs qa", "org:acme"]);
+    expect(queryArgs('is:open label:"needs qa" org:acme')).toEqual([
+      "is:open",
+      "label:needs qa",
+      "org:acme",
+    ]);
   });
 });
 
@@ -251,11 +300,19 @@ describe("GithubSource", () => {
     repository: { nameWithOwner: "Acme/Shop" },
     author: { login: "ola" },
   });
-  const details = { headRefOid: "abc", files: [{ path: "src/a.tsx" }], statusCheckRollup: [{ status: "COMPLETED", conclusion: "FAILURE" }], additions: 5, deletions: 1 };
+  const details = {
+    headRefOid: "abc",
+    files: [{ path: "src/a.tsx" }],
+    statusCheckRollup: [{ status: "COMPLETED", conclusion: "FAILURE" }],
+    additions: 5,
+    deletions: 1,
+  };
 
   it("maps a search to PRs and fetches details only when the PR changed", async () => {
     let updatedAt = "2026-11-04T10:00:00Z";
-    const run = vi.fn(async (args: string[]) => JSON.stringify(args[0] === "search" ? [hit(updatedAt)] : details));
+    const run = vi.fn(async (args: string[]) =>
+      JSON.stringify(args[0] === "search" ? [hit(updatedAt)] : details),
+    );
     const source = new GithubSource(run);
     const [pr] = await source.search("is:open label:needs-qa");
     expect(pr).toEqual({
@@ -274,7 +331,12 @@ describe("GithubSource", () => {
       deletions: 1,
       updatedAt: "2026-11-04T10:00:00Z",
     });
-    expect(run.mock.calls[0]![0].slice(0, 4)).toEqual(["search", "prs", "is:open", "label:needs-qa"]);
+    expect(run.mock.calls[0]![0].slice(0, 4)).toEqual([
+      "search",
+      "prs",
+      "is:open",
+      "label:needs-qa",
+    ]);
     await source.search("is:open label:needs-qa");
     expect(run).toHaveBeenCalledTimes(3);
     updatedAt = "2026-11-04T11:00:00Z";
@@ -284,16 +346,54 @@ describe("GithubSource", () => {
 });
 
 describe("PrDetailsCache", () => {
-  const pull = (sha: string) => ({ body: "## Why", user: { login: "ola" }, base: { ref: "main" }, head: { ref: "feat/x", sha }, additions: 5, deletions: 1, changed_files: 1, created_at: "2026-11-04T10:00:00Z" });
-  const files = [[{ filename: "src/a.tsx", status: "modified", additions: 5, deletions: 1, patch: "@@ -1 +1 @@\n-a\n+b" }], [{ filename: "logo.png", status: "added", additions: 0, deletions: 0 }]];
+  const pull = (sha: string) => ({
+    body: "## Why",
+    user: { login: "ola" },
+    base: { ref: "main" },
+    head: { ref: "feat/x", sha },
+    additions: 5,
+    deletions: 1,
+    changed_files: 1,
+    created_at: "2026-11-04T10:00:00Z",
+  });
+  const files = [
+    [
+      {
+        filename: "src/a.tsx",
+        status: "modified",
+        additions: 5,
+        deletions: 1,
+        patch: "@@ -1 +1 @@\n-a\n+b",
+      },
+    ],
+    [{ filename: "logo.png", status: "added", additions: 0, deletions: 0 }],
+  ];
 
   it("reads description and every file page, and refetches files only after a push", async () => {
     let sha = "abc";
-    const run = vi.fn(async (args: string[]) => JSON.stringify(args.some((arg) => arg.includes("/files")) ? files : args.some((arg) => arg.includes("/comments")) ? [[]] : pull(sha)));
+    const run = vi.fn(async (args: string[]) =>
+      JSON.stringify(
+        args.some((arg) => arg.includes("/files"))
+          ? files
+          : args.some((arg) => arg.includes("/comments"))
+            ? [[]]
+            : pull(sha),
+      ),
+    );
     const cache = new PrDetailsCache(run);
     const details = await cache.get("acme/shop", 7);
-    expect(details).toMatchObject({ body: "## Why", author: "ola", baseRef: "main", headRef: "feat/x", headSha: "abc", changedFiles: 1 });
-    expect(details.files.map((file) => [file.path, file.patch !== undefined])).toEqual([["src/a.tsx", true], ["logo.png", false]]);
+    expect(details).toMatchObject({
+      body: "## Why",
+      author: "ola",
+      baseRef: "main",
+      headRef: "feat/x",
+      headSha: "abc",
+      changedFiles: 1,
+    });
+    expect(details.files.map((file) => [file.path, file.patch !== undefined])).toEqual([
+      ["src/a.tsx", true],
+      ["logo.png", false],
+    ]);
     await cache.get("acme/shop", 7);
     // pull + files + threads; a second read skips files (same head) but re-reads threads.
     expect(run).toHaveBeenCalledTimes(5);

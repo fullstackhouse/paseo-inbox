@@ -670,7 +670,7 @@ export function ReviewScreen({ theme, layout, navigation, params }: PluginScreen
           ) : null}
 
           {tab === "github" ? (
-            <GitHubTab key={run.itemKey} data={upstream.data} error={upstream.error} loading={upstream.isFetching} onRefresh={() => void upstream.refetch()} url={pr.url} theme={theme} />
+            <GitHubTab key={run.itemKey} data={upstream.data} error={upstream.error} loading={upstream.isFetching} onRefresh={() => void upstream.refetch()} pr={pr} theme={theme} />
           ) : null}
 
           {tab === "preview" && draft ? (
