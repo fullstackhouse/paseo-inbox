@@ -365,7 +365,7 @@ export function preamble(pr: Pr): string {
   return [
     `You were started by paseo-inbox for ${pr.url} at ${pr.headSha}.`,
     "Do not post to this PR until the human tells you to (a Send click on your ask counts): no reviews, comments, labels, pushes to its branch or merges.",
-    "If you were asked for a review, save it with inbox_review_draft; the human posts it with Post.",
+    "If you were asked for a review, save it with inbox_review_draft; the human posts it with Post. Create no ask for the draft: the Inbox and the chat's Review pill already put it in front of the human, so end with a short summary in chat.",
     "Otherwise end by creating one ask with your result and a Send action for each write to this PR you propose.",
   ].join(" ");
 }

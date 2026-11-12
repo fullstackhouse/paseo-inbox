@@ -53,7 +53,7 @@ export async function callTool(
       reviews.save(draft);
       inbox.markDrafted(run.id, `review drafted: ${draftHeadline(draft)}`);
       const kept = previous ? draft.comments.filter((comment) => comment.author === "human" || comment.status !== "draft").length : 0;
-      return { text: `Saved: ${draftHeadline(draft)}.${kept ? ` Kept ${kept} comment(s) the human wrote or decided on.` : ""} The human reads and posts it from the Inbox; don't post it yourself.` };
+      return { text: `Saved: ${draftHeadline(draft)}.${kept ? ` Kept ${kept} comment(s) the human wrote or decided on.` : ""} The human reads and posts it from the Inbox; don't post it yourself, and create no ask for it.` };
     }
     if (name === REVISE_TOOL) {
       if (!previous) throw new Error(`No draft yet: save one with ${REVIEW_TOOL} first`);
