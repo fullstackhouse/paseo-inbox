@@ -61,7 +61,7 @@ export async function callTool(
       if (repo) assertQualifiedRefs(draft, repo);
       reviews.save(draft);
       inbox.markDrafted(run.id, `review drafted: ${draftHeadline(draft)}`);
-      const lines = [applied.length ? `Applied: ${applied.join(", ")}.` : "Nothing changed.", ...(refused.length ? [`Refused: ${refused.join("; ")}. Ask the human to change those.`] : [])];
+      const lines = [applied.length ? `Applied: ${applied.join(", ")}.` : "Nothing changed.", ...(refused.length ? [`Refused: ${refused.join("; ")}. Those are the human's to change; say so in your reply.`] : [])];
       return { text: lines.join(" "), isError: !applied.length && refused.length > 0 };
     }
     throw new Error(`Unknown tool ${name}`);
