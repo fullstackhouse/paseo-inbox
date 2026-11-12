@@ -11,6 +11,7 @@ import { emptyState, type State } from "../shared/inbox";
 import {
   addHumanComment,
   composeReview,
+  crossRepoBareRefs,
   postSummary,
   deleteHumanComment,
   draftHeadline,
@@ -182,6 +183,42 @@ describe("MCP tools", () => {
     expect((await callTool(inbox, reviews, "agent-1", "inbox_review_revise", { drop: ["c1"] })).text).toBe("Nothing changed. Refused: c1: the human wrote or decided on it. Ask the human to change those.");
     expect((await callTool(inbox, reviews, "agent-1", "inbox_review_revise", { drop: ["c2"] })).text).toBe("Applied: removed c2.");
     expect((await callTool(inbox, reviews, "someone-else", "inbox_review_draft", raw)).text).toBe("Only agents started by paseo-inbox can use the inbox tools");
+  });
+
+  it("refuses a bare #N the draft writes elsewhere as another repo's owner/repo#N", async () => {
+    const { inbox, reviews, state } = setup();
+    await inbox.poll();
+    const shortened = { ...raw, summary: "Builds on acme/widgets#12. Merge after #12 lands." };
+    const refused = await callTool(inbox, reviews, "agent-1", "inbox_review_draft", shortened, NOW);
+    expect(refused).toMatchObject({ isError: true });
+    expect(refused.text).toContain("#12 (written elsewhere as acme/widgets#12)");
+    expect(reviews.get(state().runs[0]!.id)).toBeNull();
+    expect((await callTool(inbox, reviews, "agent-1", "inbox_review_draft", { ...raw, summary: "Builds on acme/widgets#12. Merge after acme/widgets#12 lands." }, NOW)).isError).toBeFalsy();
+    const revise = await callTool(inbox, reviews, "agent-1", "inbox_review_revise", { add: [{ path: PATH, line: 11, body: "Same bug as #12." }] });
+    expect(revise).toMatchObject({ isError: true });
+    expect(reviews.get(state().runs[0]!.id)!.comments.some((comment) => comment.body === "Same bug as #12.")).toBe(false);
+  });
+});
+
+describe("crossRepoBareRefs", () => {
+  const draft = (summary: string, comments: { body: string; author?: "ai" | "human"; status?: "draft" | "dropped" }[] = []) => ({
+    summary,
+    reasoning: "",
+    chapters: [],
+    comments: comments.map((comment, index) => ({ id: `c${index + 1}`, path: PATH, line: 11, side: "RIGHT" as const, severity: null, raised: null, reply: false, author: "ai" as const, status: "draft" as const, ...comment })),
+  });
+
+  it("flags a shortened reference to another repo, across fields and URL forms", () => {
+    expect(crossRepoBareRefs(draft("After acme/widgets#12 merges.", [{ body: "Wait for #12." }]), "acme/shop")).toEqual(["acme/widgets#12"]);
+    expect(crossRepoBareRefs(draft("See https://github.com/acme/widgets/pull/12 first; #12 adds the column."), "acme/shop")).toEqual(["acme/widgets#12"]);
+  });
+
+  it("leaves same-repo and unrelated references alone", () => {
+    expect(crossRepoBareRefs(draft("Follows #12 and acme/shop#12."), "acme/shop")).toEqual([]);
+    expect(crossRepoBareRefs(draft("Needs acme/widgets#12; also fixes #13."), "acme/shop")).toEqual([]);
+    expect(crossRepoBareRefs(draft("Needs acme/widgets#12 and acme/widgets#12 again."), "acme/shop")).toEqual([]);
+    expect(crossRepoBareRefs(draft("Needs acme/widgets#12. Colour `#12` and &#12; are not links."), "acme/shop")).toEqual([]);
+    expect(crossRepoBareRefs(draft("Needs acme/widgets#12.", [{ body: "#12", author: "human" }, { body: "#12", status: "dropped" }]), "acme/shop")).toEqual([]);
   });
 });
 

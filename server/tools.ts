@@ -1,5 +1,5 @@
 import type { AgentPermissionRequest, McpToolRef } from "@getpaseo/protocol/agent-types";
-import { draftHeadline, MCP_SERVER, PR_TOOL, prContext, replaceDraft, REVIEW_TOOL, type PrDetails, ReviewInputSchema, REVISE_TOOL, ReviseInputSchema, reviseDraft, TOOLS } from "../shared/review";
+import { assertQualifiedRefs, draftHeadline, MCP_SERVER, PR_TOOL, prContext, replaceDraft, REVIEW_TOOL, type PrDetails, ReviewInputSchema, REVISE_TOOL, ReviseInputSchema, reviseDraft, TOOLS } from "../shared/review";
 import { untrustedAllows } from "../shared/trust";
 import type { Inbox } from "./inbox";
 import type { ReviewStore } from "./reviews";
@@ -46,8 +46,10 @@ export async function callTool(
       return { text: prContext(pr, await details(pr.repo, pr.number)) };
     }
     const previous = reviews.get(run.id);
+    const repo = inbox.item(run.itemKey)?.pr.repo;
     if (name === REVIEW_TOOL) {
       const draft = replaceDraft(previous, ReviewInputSchema.parse(args), run, now);
+      if (repo) assertQualifiedRefs(draft, repo);
       reviews.save(draft);
       inbox.markDrafted(run.id, `review drafted: ${draftHeadline(draft)}`);
       const kept = previous ? draft.comments.filter((comment) => comment.author === "human" || comment.status !== "draft").length : 0;
@@ -56,6 +58,7 @@ export async function callTool(
     if (name === REVISE_TOOL) {
       if (!previous) throw new Error(`No draft yet: save one with ${REVIEW_TOOL} first`);
       const { draft, applied, refused } = reviseDraft(previous, ReviseInputSchema.parse(args));
+      if (repo) assertQualifiedRefs(draft, repo);
       reviews.save(draft);
       inbox.markDrafted(run.id, `review drafted: ${draftHeadline(draft)}`);
       const lines = [applied.length ? `Applied: ${applied.join(", ")}.` : "Nothing changed.", ...(refused.length ? [`Refused: ${refused.join("; ")}. Ask the human to change those.`] : [])];
