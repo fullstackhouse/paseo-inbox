@@ -180,7 +180,7 @@ describe("MCP tools", () => {
     const runId = state().runs[0]!.id;
     expect(state().runs[0]).toMatchObject({ state: "needs-decision", reason: "review drafted: request-changes · 80% · 1 blocker, 1 note" });
     reviews.save(updateComment(reviews.get(runId)!, "c1", { status: "kept" }));
-    expect((await callTool(inbox, reviews, "agent-1", "inbox_review_revise", { drop: ["c1"] })).text).toBe("Nothing changed. Refused: c1: the human wrote or decided on it. Ask the human to change those.");
+    expect((await callTool(inbox, reviews, "agent-1", "inbox_review_revise", { drop: ["c1"] })).text).toBe("Nothing changed. Refused: c1: the human wrote or decided on it. Those are the human's to change; say so in your reply.");
     expect((await callTool(inbox, reviews, "agent-1", "inbox_review_revise", { drop: ["c2"] })).text).toBe("Applied: removed c2.");
     expect((await callTool(inbox, reviews, "someone-else", "inbox_review_draft", raw)).text).toBe("Only agents started by paseo-inbox can use the inbox tools");
   });
