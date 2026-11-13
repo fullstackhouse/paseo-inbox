@@ -33,6 +33,7 @@ import { AskBox, CommentCard } from "./CommentCard";
 import { HandoffPanel, PreviewPane } from "./Decide";
 import { FileDiff, type DiffActions } from "./FileDiff";
 import { Markdown } from "./Markdown";
+import { PrPreview } from "./PrPreview";
 import { useOpenUrl } from "./openUrl";
 import { ago, Chip, MONO, Pill, verdictColor } from "./ui";
 import { useInbox } from "./useInbox";
@@ -346,12 +347,15 @@ export function ReviewScreen({ theme, layout, navigation, params }: PluginScreen
       }
     };
     return (
-      <View style={{ flex: 1, padding: pad, gap: 12, alignItems: "flex-start", backgroundColor: theme.colors.surface0 }}>
-        <Text style={{ color: theme.colors.foreground, fontSize: 15, fontWeight: "600" }}>No review of {prLabel} yet</Text>
-        <Text style={muted}>Start one and a reviewer drafts it here. You read and post it from this screen.</Text>
-        <Chip theme={theme} active label={busy === "start" ? "Starting…" : "Start review"} disabled={busy === "start"} onPress={() => void start()} />
-        {error ? <Text style={{ color: theme.colors.statusDanger, fontSize: 13 }}>{error}</Text> : null}
-      </View>
+      <PrPreview
+        theme={theme}
+        compact={layout.compact}
+        prRef={prRef}
+        prLabel={prLabel}
+        starting={busy === "start"}
+        error={error}
+        onStart={() => void start()}
+      />
     );
   }
   if (!runId || (view && !run)) {
