@@ -525,6 +525,12 @@ export const severityFromRpc = (value: z.infer<typeof SeverityRpc>): Severity =>
 
 export const getReview = defineRpc({ name: "inbox.review_get", input: z.object({ runId: z.string() }), output: ReviewDraftSchema.nullable() });
 export const getPrDetails = defineRpc({ name: "inbox.pr_get", input: z.object({ itemKey: z.string() }), output: PrDetailsSchema });
+/** A PR read by link (URL or owner/repo#n) without a review run, so the review screen can show it before one starts. */
+export const previewPr = defineRpc({
+  name: "inbox.pr_preview",
+  input: z.object({ ref: z.string().min(1) }),
+  output: z.object({ repo: z.string(), number: z.number(), url: z.string(), details: PrDetailsSchema }),
+});
 export const updateReviewComment = defineRpc({
   name: "inbox.review_comment",
   input: z.object({
