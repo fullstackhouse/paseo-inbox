@@ -18,7 +18,7 @@ export function GitHubTab({
   error: Error | null;
   loading: boolean;
   onRefresh: () => void;
-  pr: Pr;
+  pr: Pick<Pr, "number" | "title" | "url" | "repo">;
   theme: PluginTheme;
 }) {
   const muted = { color: theme.colors.foregroundMuted, fontSize: 13 };

@@ -43,3 +43,9 @@ export const getPrUpstream = defineRpc({
   input: z.object({ itemKey: z.string() }),
   output: PrUpstreamSchema,
 });
+/** The same, for a PR read by link (URL or owner/repo#n) that isn't in the inbox. */
+export const previewPrUpstream = defineRpc({
+  name: "inbox.pr_upstream_preview",
+  input: z.object({ ref: z.string().min(1) }),
+  output: PrUpstreamSchema,
+});
