@@ -1,3 +1,5 @@
+import { fetchPrUpstream } from "./server/upstream";
+import { getPrUpstream, previewPrUpstream } from "./shared/upstream";
 import type { PaseoApi, PaseoWorkspaceHandle } from "@getpaseo/client";
 import type { PluginServerContext } from "@getpaseo/plugin/server";
 import { installBridge } from "./server/bridge";
@@ -290,6 +292,18 @@ export default function contribute(server: PluginServerContext) {
     if (!parsed) throw new Error("Not a GitHub PR link (https://github.com/owner/repo/pull/123) or owner/repo#123");
     const details = await prDetails.get(parsed.repo, parsed.number);
     return { ...parsed, url: `https://github.com/${parsed.repo}/pull/${parsed.number}`, details };
+  });
+  server.handle(getPrUpstream, ({ itemKey }, { paseo: api }) => {
+    capture(api);
+    const item = inbox.item(itemKey);
+    if (!item) throw new Error(`Unknown PR ${itemKey}`);
+    return fetchPrUpstream(item.pr.repo, item.pr.number);
+  });
+  server.handle(previewPrUpstream, ({ ref }, { paseo: api }) => {
+    capture(api);
+    const parsed = parsePrRef(ref);
+    if (!parsed) throw new Error("Not a GitHub PR link (https://github.com/owner/repo/pull/123) or owner/repo#123");
+    return fetchPrUpstream(parsed.repo, parsed.number);
   });
   const editDraft = (runId: string, change: (draft: ReviewDraft) => ReviewDraft) => {
     const draft = reviews.get(runId);

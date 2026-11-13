@@ -24,6 +24,8 @@ Paseo plugin: GitHub PR searches → rules → one agent per match. Untrusted au
 
 - Chat cards: `shared/timeline.ts` `draftCardFor` turns a completed `inbox_review_draft`/`inbox_review_revise` tool call into a `inbox-draft-change` item (comments added/edited/removed with ids parsed from the tool's "Applied: …" output, verdict/fields set, refusals); `client/DraftChangeCard.tsx` renders it with Open review (run found by `agentId` in the shared inbox view). Keep the tool output wording in `server/tools.ts` and these regexes in step.
 
+Reuse host semantic UI when the same surface already exists in Paseo; expose a shared component instead of rebuilding its checks, activity cards or interactions in the plugin.
+
 Render Markdown through `@getpaseo/plugin/client/ui`. Use `afterBlock` source ranges for document comments; do not add a plugin parser or renderer.
 
 ## Load-bearing facts (Paseo 0.12)

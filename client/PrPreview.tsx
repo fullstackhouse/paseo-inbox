@@ -1,15 +1,18 @@
 import type { PluginTheme } from "@getpaseo/plugin";
 import { useRpc } from "@getpaseo/plugin/client";
+import { useQuery } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { ActivityIndicator, ScrollView, Text, View } from "react-native";
 import { previewPr, type PrDetails } from "../shared/review";
+import { previewPrUpstream } from "../shared/upstream";
 import { FileDiff, type DiffActions } from "./FileDiff";
+import { GitHubTab } from "./GitHubTab";
 import { Markdown } from "./Markdown";
 import { useOpenUrl } from "./openUrl";
 import { ago, Chip, MONO } from "./ui";
 
 type Preview = { repo: string; number: number; url: string; details: PrDetails };
-type Tab = "description" | "files";
+type Tab = "description" | "files" | "github";
 
 // Nothing to edit or ask about without a review run: lines aren't tappable and no composer opens.
 const READ_ONLY: DiffActions = {
@@ -40,6 +43,15 @@ export function PrPreview(props: {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>("description");
   const [openFiles, setOpenFiles] = useState<Set<string>>(new Set());
+  const loadUpstream = useRpc(previewPrUpstream);
+  const upstream = useQuery({
+    queryKey: ["inbox.pr_upstream_preview", prRef],
+    queryFn: () => loadUpstream({ ref: prRef }),
+    enabled: tab === "github",
+    staleTime: 0,
+    retry: false,
+    refetchOnWindowFocus: false,
+  });
 
   useEffect(() => {
     let live = true;
@@ -92,6 +104,7 @@ export function PrPreview(props: {
           <View style={{ flexDirection: "row", gap: 6, paddingHorizontal: pad, paddingVertical: 8, justifyContent: compact ? "flex-start" : "center" }}>
             <Chip theme={theme} label="Description" active={tab === "description"} onPress={() => setTab("description")} />
             <Chip theme={theme} label={details ? `Files ${files.length}` : "Files"} active={tab === "files"} onPress={() => setTab("files")} />
+            <Chip theme={theme} label="GitHub" active={tab === "github"} onPress={() => setTab("github")} />
           </View>
         </View>
 
@@ -99,6 +112,16 @@ export function PrPreview(props: {
           {loadError ? <Text style={{ color: theme.colors.statusDanger, fontSize: 13 }}>{loadError}</Text> : null}
           {!details && !loadError ? <ActivityIndicator color={theme.colors.foregroundMuted} /> : null}
           {details && tab === "description" ? <Markdown text={details.body} theme={theme} /> : null}
+          {preview && tab === "github" ? (
+            <GitHubTab
+              data={upstream.data}
+              error={upstream.error}
+              loading={upstream.isFetching}
+              onRefresh={() => void upstream.refetch()}
+              pr={{ ...preview, title: preview.details.title || prLabel }}
+              theme={theme}
+            />
+          ) : null}
           {details && tab === "files" ? (
             <>
               <View style={{ flexDirection: "row", gap: 8, flexWrap: "wrap" }}>
