@@ -17,6 +17,9 @@ export function tint(color: string, alpha: number): string {
   return rgb ? `rgba(${rgb[1]!.trim()}, ${rgb[2]!.trim()}, ${rgb[3]!.trim()}, ${alpha})` : color;
 }
 
+/** Web-only `position: sticky` (react-native-web passes it through; React Native's types don't know it). */
+export const STICKY = (top: number) => ({ position: "sticky", top, zIndex: 2 }) as object;
+
 export const verdictColor = (theme: PluginTheme, verdict: string) =>
   verdict === "approve" ? theme.colors.statusSuccess : verdict === "request-changes" ? theme.colors.statusDanger : theme.colors.statusWarning;
 

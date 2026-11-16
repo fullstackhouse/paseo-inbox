@@ -4,7 +4,8 @@ import { useQuery } from "@tanstack/react-query";
 import { getPrUpstream } from "../shared/upstream";
 import { GitHubTab } from "./GitHubTab";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, Pressable, ScrollView, Text, View } from "react-native";
+import { ActivityIndicator, Platform, Pressable, ScrollView, Text, View } from "react-native";
+import { fileAt, nextUnviewed, stepFile } from "../shared/filetree";
 import { addPr, DISMISSED, parsePrRef, restoreRun, reviewRunFor, runNow, skipRun, type Run } from "../shared/inbox";
 import {
   addReviewComment,
@@ -28,6 +29,7 @@ import {
   walkthrough,
   type CommentChange,
   type PrDetails,
+  type PrFile,
   type ReviewDraft,
   type Severity,
 } from "../shared/review";
@@ -35,11 +37,13 @@ import { reanchorReview, reviewSince, type Since } from "../shared/rereview";
 import { AskBox, CommentCard } from "./CommentCard";
 import { HandoffPanel, PreviewPane } from "./Decide";
 import { FileDiff, type DiffActions } from "./FileDiff";
+import { FileIndex } from "./FileIndex";
 import { Markdown } from "./Markdown";
 import { PrPreview } from "./PrPreview";
 import { useOpenUrl } from "./openUrl";
-import { ago, Chip, MONO, Pill, verdictColor } from "./ui";
+import { ago, Chip, MONO, Pill, STICKY, verdictColor } from "./ui";
 import { useInbox } from "./useInbox";
+import { useScreenKeys } from "./useScreenKeys";
 
 export { REVIEW_SCREEN } from "./nav";
 
@@ -122,10 +126,28 @@ export function ReviewScreen({ theme, layout, navigation, params }: PluginScreen
   const [busy, setBusy] = useState<string | null>(null);
   const scroll = useRef<ScrollView>(null);
   const carried = useRef<string | null>(null);
-  // Jump-to-file: where the content and each file card sit, and which file to scroll to once laid out.
+  // Jump-to-file on native: where the content, the Files list and each file card in it sit (web measures the DOM, see fileTop).
   const contentY = useRef(0);
+  const rowY = useRef(0);
+  const listY = useRef(0);
   const fileY = useRef(new Map<string, number>());
-  const [scrollTo, setScrollTo] = useState<string | null>(null);
+  const fileNode = useRef(new Map<string, unknown>());
+  // The file on screen in the Files tab, for the index highlight and j/k/v.
+  const [current, setCurrentState] = useState<string | null>(null);
+  // Mirrors `current` so key repeats faster than a render step from the newest file.
+  const currentRef = useRef<string | null>(null);
+  const setCurrent = (path: string | null) => {
+    currentRef.current = path;
+    setCurrentState(path);
+  };
+  // A jump in flight: until `until`, layout changes (a viewed file folding, cards mounting) re-aim the
+  // scroll at `path`, and scroll events are the jump's own, so they leave `current` on its file.
+  const jump = useRef<{ path: string; until: number } | null>(null);
+  const jumping = () => Boolean(jump.current && Date.now() < jump.current.until);
+  const [tabsHeight, setTabsHeight] = useState(52);
+  const [box, setBox] = useState({ width: 0, height: 0 });
+  const [indexOpen, setIndexOpen] = useState(false);
+  const root = useRef<View>(null);
 
   // The prev/next set is fixed when the screen opens, so posting or dismissing doesn't reshuffle it.
   const snapshot = useRef<string[] | null>(null);
@@ -145,6 +167,7 @@ export function ReviewScreen({ theme, layout, navigation, params }: PluginScreen
     setAskingSummary(false);
     setOpenFiles(new Set());
     setClosedChapters(new Set());
+    setCurrent(null);
     scroll.current?.scrollTo({ y: 0, animated: false });
   }, [runId]);
 
@@ -330,9 +353,46 @@ export function ReviewScreen({ theme, layout, navigation, params }: PluginScreen
       return nextClosed;
     });
 
+  /** Where a Files-tab card's top sits in the scroll content. */
+  const fileTop = (path: string) => {
+    // react-native-web reports onLayout on resize only, so a card moved by another folding keeps a stale y: measure the DOM.
+    if (Platform.OS === "web") {
+      const card = fileNode.current.get(path) as Box | undefined;
+      const viewport = scroll.current?.getScrollableNode() as Box | undefined;
+      return card && viewport ? card.getBoundingClientRect().top - viewport.getBoundingClientRect().top + viewport.scrollTop : undefined;
+    }
+    const y = fileY.current.get(path);
+    return y === undefined ? undefined : contentY.current + rowY.current + listY.current + y;
+  };
+  const scrollToFile = (path: string) => {
+    const top = fileTop(path);
+    if (top === undefined) return false;
+    scroll.current?.scrollTo({ y: Math.max(0, top - tabsHeight - 8), animated: true });
+    return true;
+  };
+  /** Opens a file and brings its card under the tabs. */
+  const jumpTo = (path: string | null) => {
+    if (!path) return;
+    toggleFile(path, true);
+    setCurrent(path);
+    jump.current = { path, until: Date.now() + 1000 };
+  };
+  // Cards whose position didn't move fire no onLayout, so a jump also aims once the render settles.
+  useEffect(() => {
+    if (!jumping()) return;
+    const timer = setTimeout(() => jumping() && scrollToFile(jump.current!.path), 60);
+    return () => clearTimeout(timer);
+  });
+
+  // Desktop keys for the Files tab: j/k next/previous file, v ticks the file on screen.
+  const keys = useRef<(key: string) => boolean>(() => false);
+  useScreenKeys(root, (key) => keys.current(key));
+
   const muted = { color: theme.colors.foregroundMuted, fontSize: 13 };
   const pad = layout.compact ? 14 : 24;
-  const maxWidth = 980;
+  // A wide web pane gets the file tree as a pinned sidebar; elsewhere it's a list above the files you can fold.
+  const sidebar = Platform.OS === "web" && !layout.compact && box.width >= 1000;
+  const maxWidth = tab === "files" && sidebar ? 1320 : 980;
   const small = { paddingVertical: 4, paddingHorizontal: 10 };
 
   if (!runId && prRef && (!view || byPr)) {
@@ -404,19 +464,66 @@ export function ReviewScreen({ theme, layout, navigation, params }: PluginScreen
   ];
 
   const viewedCount = files.filter((file) => isViewed(draft, file)).length;
+  const canMarkViewed = Boolean(draft && !draft.postedUrl);
+  const paths = files.map((file) => file.path);
+  const setViewed = (file: PrFile, value: boolean) =>
+    void markViewed({ runId, path: file.path, patch: file.patch, viewed: value })
+      .then((next) => {
+        setDraft(next);
+        // Ticking a file folds it away, like GitHub's "Viewed", and its chapter once every file in it is viewed.
+        if (!value) return;
+        toggleFile(file.path, false);
+        const finished = chapterIndexes(
+          walkthrough(next, files).map((chapter) => (chapter.files.includes(file.path) ? chapter : { files: [] })),
+          (candidate) => chapterViewed(next, files, candidate),
+        );
+        if (finished.length) setClosedChapters((current) => new Set([...current, ...finished]));
+        // In Files, carry on to the next file still to read.
+        if (tab === "files") jumpTo(nextUnviewed(paths, file.path, (path) => chapterViewed(next, files, path)));
+      })
+      .catch(fail);
+  keys.current = (key) => {
+    if (tab !== "files" || !details) return false;
+    if (key === "j" || key === "k") {
+      jumpTo(stepFile(paths, currentRef.current, key === "j" ? 1 : -1));
+      return true;
+    }
+    const file = files.find((candidate) => candidate.path === currentRef.current);
+    if (key === "v" && file && canMarkViewed) {
+      setViewed(file, !isViewed(draft, file));
+      return true;
+    }
+    return false;
+  };
+  const fileIndex = (
+    <FileIndex
+      files={files}
+      theme={theme}
+      current={current}
+      viewed={(file) => isViewed(draft, file)}
+      comments={(path) => (commentsByFile.get(path) ?? []).filter((comment) => comment.status !== "dropped").length}
+      onJump={jumpTo}
+      onViewed={canMarkViewed ? setViewed : undefined}
+    />
+  );
   const fileDiff = (path: string, track = false) => {
     const file = files.find((candidate) => candidate.path === path);
     return file ? (
       <View
         key={path}
+        ref={
+          track
+            ? (node) => {
+                if (node) fileNode.current.set(path, node);
+                else fileNode.current.delete(path);
+              }
+            : undefined
+        }
         onLayout={
           track
             ? (event) => {
                 fileY.current.set(path, event.nativeEvent.layout.y);
-                if (scrollTo === path) {
-                  scroll.current?.scrollTo({ y: Math.max(0, contentY.current + event.nativeEvent.layout.y - 64), animated: true });
-                  setScrollTo(null);
-                }
+                if (jumping()) scrollToFile(jump.current!.path);
               }
             : undefined
         }
@@ -431,24 +538,8 @@ export function ReviewScreen({ theme, layout, navigation, params }: PluginScreen
           actions={actions}
           viewed={isViewed(draft, file)}
           threads={threadsFor(path)}
-          onViewed={
-            draft && !draft.postedUrl
-              ? (value) =>
-                  void markViewed({ runId, path, patch: file.patch, viewed: value })
-                    .then((next) => {
-                      setDraft(next);
-                      // Ticking a file folds it away, like GitHub's "Viewed", and its chapter once every file in it is viewed.
-                      if (!value) return;
-                      toggleFile(path, false);
-                      const finished = chapterIndexes(
-                        walkthrough(next, files).map((chapter) => (chapter.files.includes(path) ? chapter : { files: [] })),
-                        (candidate) => chapterViewed(next, files, candidate),
-                      );
-                      if (finished.length) setClosedChapters((current) => new Set([...current, ...finished]));
-                    })
-                    .catch(fail)
-              : undefined
-          }
+          onViewed={canMarkViewed ? (value) => setViewed(file, value) : undefined}
+          stickyTop={tabsHeight}
         />
       </View>
     ) : (
@@ -459,8 +550,23 @@ export function ReviewScreen({ theme, layout, navigation, params }: PluginScreen
   };
 
   return (
-    <View style={{ flex: 1, backgroundColor: theme.colors.surface0 }}>
-      <ScrollView ref={scroll} stickyHeaderIndices={[1]} contentContainerStyle={{ paddingBottom: 24 }}>
+    <View ref={root} style={{ flex: 1, backgroundColor: theme.colors.surface0 }}>
+      <ScrollView
+        ref={scroll}
+        stickyHeaderIndices={[1]}
+        contentContainerStyle={{ paddingBottom: 24 }}
+        onLayout={(event) => {
+          const { width, height } = event.nativeEvent.layout;
+          if (width !== box.width || height !== box.height) setBox({ width, height });
+        }}
+        scrollEventThrottle={64}
+        onScroll={(event) => {
+          if (tab !== "files" || jumping()) return;
+          const tops = new Map(paths.flatMap((path) => (fileTop(path) === undefined ? [] : [[path, fileTop(path)!] as const])));
+          const at = fileAt(tops, paths, event.nativeEvent.contentOffset.y + tabsHeight + 12);
+          if (at !== current) setCurrent(at);
+        }}
+      >
         {/* Header */}
         <View style={{ paddingHorizontal: pad, paddingTop: pad, paddingBottom: 10, gap: 8, width: "100%", maxWidth, alignSelf: "center" }}>
           <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
@@ -527,7 +633,7 @@ export function ReviewScreen({ theme, layout, navigation, params }: PluginScreen
         </View>
 
         {/* Sticky tabs */}
-        <View style={{ backgroundColor: theme.colors.surface0, borderBottomWidth: 1, borderBottomColor: theme.colors.border }}>
+        <View onLayout={(event) => setTabsHeight(Math.round(event.nativeEvent.layout.height))} style={{ backgroundColor: theme.colors.surface0, borderBottomWidth: 1, borderBottomColor: theme.colors.border, zIndex: 3 }}>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: pad, paddingVertical: 8, gap: 6, flexGrow: 1, justifyContent: layout.compact ? "flex-start" : "center" }}>
             {tabs.map((item) => (
               <Chip key={item.id} theme={theme} label={item.label} active={tab === item.id} onPress={() => setTab(item.id)} />
@@ -639,18 +745,45 @@ export function ReviewScreen({ theme, layout, navigation, params }: PluginScreen
 
           {tab === "files" ? (
             details ? (
-              <>
-                <View style={{ flexDirection: "row", gap: 8, flexWrap: "wrap" }}>
-                  <Chip theme={theme} label="Expand all" onPress={() => setOpenFiles(new Set(files.map((file) => file.path)))} />
-                  <Chip theme={theme} label="Collapse all" onPress={() => setOpenFiles(new Set())} />
-                  {live.length ? <Chip theme={theme} label="Only commented" onPress={() => setOpenFiles(new Set(live.map((comment) => comment.path)))} /> : null}
-                  <Chip theme={theme} label="Not viewed" onPress={() => setOpenFiles(new Set(files.filter((file) => !isViewed(draft, file)).map((file) => file.path)))} />
-                  <Text style={{ ...muted, alignSelf: "center" }}>
-                    {viewedCount}/{files.length} viewed
-                  </Text>
+              <View onLayout={(event) => (rowY.current = event.nativeEvent.layout.y)} style={{ flexDirection: sidebar ? "row" : "column", alignItems: sidebar ? "flex-start" : "stretch", gap: sidebar ? 20 : 12 }}>
+                {sidebar ? (
+                  <ScrollView
+                    style={[{ width: 300, flexGrow: 0, flexShrink: 0, maxHeight: Math.max(240, box.height - tabsHeight - 24) }, STICKY(tabsHeight + 12)]}
+                    contentContainerStyle={{ paddingBottom: 8 }}
+                  >
+                    {fileIndex}
+                  </ScrollView>
+                ) : (
+                  <View style={{ gap: 8, backgroundColor: theme.colors.surface1, borderRadius: 10, paddingHorizontal: 10, paddingVertical: 8 }}>
+                    <Pressable accessibilityRole="button" accessibilityState={{ expanded: indexOpen }} onPress={() => setIndexOpen(!indexOpen)} style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                      <Text style={{ flex: 1, color: theme.colors.foreground, fontSize: 13, fontWeight: "600" }}>
+                        File list <Text style={{ ...muted, fontWeight: "400" }}>· {viewedCount}/{files.length} viewed</Text>
+                      </Text>
+                      <Text style={{ color: theme.colors.foregroundMuted, fontSize: 12 }}>{indexOpen ? "▾" : "▸"}</Text>
+                    </Pressable>
+                    {indexOpen ? fileIndex : null}
+                  </View>
+                )}
+                <View onLayout={(event) => (listY.current = event.nativeEvent.layout.y)} style={{ flex: sidebar ? 1 : undefined, minWidth: 0, gap: 12 }}>
+                  <View style={{ flexDirection: "row", gap: 8, flexWrap: "wrap" }}>
+                    <Chip theme={theme} label="Expand all" onPress={() => setOpenFiles(new Set(files.map((file) => file.path)))} />
+                    <Chip theme={theme} label="Collapse all" onPress={() => setOpenFiles(new Set())} />
+                    {live.length ? <Chip theme={theme} label="Only commented" onPress={() => setOpenFiles(new Set(live.map((comment) => comment.path)))} /> : null}
+                    <Chip theme={theme} label="Not viewed" onPress={() => setOpenFiles(new Set(files.filter((file) => !isViewed(draft, file)).map((file) => file.path)))} />
+                    <Text style={{ ...muted, alignSelf: "center" }}>
+                      {viewedCount}/{files.length} viewed
+                    </Text>
+                    {Platform.OS === "web" && !layout.compact ? (
+                      <Text style={{ ...muted, fontSize: 12, alignSelf: "center", marginLeft: "auto" }}>
+                        <Text style={{ fontFamily: MONO }}>j</Text>/<Text style={{ fontFamily: MONO }}>k</Text> next/previous file{canMarkViewed ? " · " : ""}
+                        {canMarkViewed ? <Text style={{ fontFamily: MONO }}>v</Text> : null}
+                        {canMarkViewed ? " viewed" : ""}
+                      </Text>
+                    ) : null}
+                  </View>
+                  {files.map((file) => fileDiff(file.path, true))}
                 </View>
-                {files.map((file) => fileDiff(file.path, true))}
-              </>
+              </View>
             ) : (
               <ActivityIndicator color={theme.colors.foregroundMuted} />
             )
@@ -698,9 +831,8 @@ export function ReviewScreen({ theme, layout, navigation, params }: PluginScreen
                   onDelete={() => actions.onDelete(comment.id)}
                   onDiscuss={(question) => ask(question, `your comment on ${comment.path}${comment.line ? `:${comment.line}` : ""} (${comment.id}): "${comment.body}"`)}
                   onOpenFile={() => {
-                    toggleFile(comment.path, true);
                     setTab("files");
-                    setScrollTo(comment.path);
+                    jumpTo(comment.path);
                   }}
                 />
               ))
@@ -788,6 +920,9 @@ export function ReviewScreen({ theme, layout, navigation, params }: PluginScreen
     </View>
   );
 }
+
+// The client compiles without the DOM lib; the two DOM shapes `fileTop` reads on web.
+type Box = { getBoundingClientRect(): { top: number }; scrollTop: number };
 
 const SINCE_FROM = { draft: "this draft's commit", reviewed: "the commit the summary was written for", posted: "your last review" } as const;
 

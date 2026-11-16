@@ -7,7 +7,7 @@ import { addedText, isMarkdownPath } from "../shared/markdown";
 import type { Placement, PrFile, PrThread, Severity, StoredComment } from "../shared/review";
 import { CommentCard, Composer, type CommentChange } from "./CommentCard";
 import { Markdown } from "./Markdown";
-import { Chip, MONO, tint } from "./ui";
+import { Chip, MONO, STICKY, tint } from "./ui";
 
 const BIG = 300;
 // Long tokens (URLs, hashes) wrap anywhere instead of running off the line; native Text already does.
@@ -42,6 +42,7 @@ export function FileDiff({
   viewed,
   onViewed,
   threads = [],
+  stickyTop,
 }: {
   file: PrFile;
   /** Other reviewers' comments on this file, shown where they sit. */
@@ -54,6 +55,8 @@ export function FileDiff({
   actions: DiffActions;
   viewed?: boolean;
   onViewed?: (viewed: boolean) => void;
+  /** On web, the open file's header stays pinned this far below the top of the scroll view. */
+  stickyTop?: number;
 }) {
   const hunks = useMemo(() => (open ? parsePatch(file.patch) : []), [open, file.patch]);
   // A markdown file the PR adds reads better as the document it is; the diff stays one tap away.
@@ -128,8 +131,17 @@ export function FileDiff({
   );
 
   return (
-    <View style={{ borderWidth: 1, borderColor: theme.colors.border, borderRadius: 10, overflow: "hidden", backgroundColor: theme.colors.surface1 }}>
-      <Pressable accessibilityRole="button" accessibilityLabel={`${open ? "Collapse" : "Expand"} ${file.path}`} onPress={onToggle} style={{ flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 12, paddingVertical: 10 }}>
+    // No overflow clipping on the card: it would stop the header from pinning; the body clips its own corners.
+    <View style={{ borderWidth: 1, borderColor: theme.colors.border, borderRadius: 10, backgroundColor: theme.colors.surface1 }}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`${open ? "Collapse" : "Expand"} ${file.path}`}
+        onPress={onToggle}
+        style={[
+          { flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 12, paddingVertical: 10, backgroundColor: theme.colors.surface1, borderTopLeftRadius: 10, borderTopRightRadius: 10, borderBottomLeftRadius: open ? 0 : 10, borderBottomRightRadius: open ? 0 : 10 },
+          open && stickyTop !== undefined && Platform.OS === "web" ? STICKY(stickyTop) : null,
+        ]}
+      >
         <Text style={{ color: theme.colors.foregroundMuted, fontFamily: MONO, fontSize: 12, width: 12 }}>{STATUS[file.status] ?? "M"}</Text>
         <Text style={{ flex: 1, fontSize: 14 }} numberOfLines={compact ? 2 : 1}>
           <Text style={{ color: theme.colors.foregroundMuted }}>{dir}</Text>
@@ -147,7 +159,7 @@ export function FileDiff({
         <Text style={{ color: theme.colors.foregroundMuted, fontSize: 12 }}>{open ? "▾" : "▸"}</Text>
       </Pressable>
       {open ? (
-        <View style={{ borderTopWidth: 1, borderTopColor: theme.colors.border }}>
+        <View style={{ borderTopWidth: 1, borderTopColor: theme.colors.border, overflow: "hidden", borderBottomLeftRadius: 10, borderBottomRightRadius: 10 }}>
           {fileLevel.length || actions.editable ? (
             <View style={{ padding: 8, gap: 8, backgroundColor: theme.colors.surface0 }}>
               {fileLevel.map((comment) => card(comment, "file"))}
