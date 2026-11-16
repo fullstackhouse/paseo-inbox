@@ -1,9 +1,8 @@
 import type { PluginButton, PluginButtonRegistration, PluginClientContext } from "@getpaseo/plugin/client";
 import { listInbox, reviewPill } from "../shared/inbox";
 import { getPrDetails, getReview, postReview, type PrFile, type Verdict } from "../shared/review";
-import { openScreen } from "./nav";
+import { openReview } from "./nav";
 import { makePostPopover, type PostStore, type PostTarget } from "./PostReviewPopover";
-import { REVIEW_SCREEN } from "./ReviewScreen";
 import { publish, snapshot, subscribe } from "./useInbox";
 
 const POLL_MS = 15_000;
@@ -53,8 +52,8 @@ export function contributeReviewPills(client: PluginClientContext): () => void {
   };
   const postBehavior: PluginButton["behavior"] = { kind: "popover", Content: makePostPopover(store) };
 
-  const button = (runId: string, posted: boolean, postAs: Verdict | null): Pick<PluginButton, "title" | "label" | "behavior"> => {
-    const open = { kind: "action" as const, onPress: () => openScreen({ screenId: REVIEW_SCREEN, params: { runId } }) };
+  const button = (runId: string, workspaceId: string, posted: boolean, postAs: Verdict | null): Pick<PluginButton, "title" | "label" | "behavior"> => {
+    const open = { kind: "action" as const, onPress: () => openReview(runId, workspaceId) };
     if (posted) return { title: "Open the review", label: "Review posted", behavior: open };
     return {
       title: "Open or post the review",
@@ -88,8 +87,8 @@ export function contributeReviewPills(client: PluginClientContext): () => void {
       const existing = pills.get(agentId);
       if (existing?.key === key) continue;
       // Only on a real change: a new behavior closes the menu or popover the human has open.
-      if (existing) existing.registration.update(button(runId, posted, postAs));
-      const registration = existing?.registration ?? client.addComposerPill({ id: "review", workspaceId, agentId, button: { icon: "ClipboardCheck", ...button(runId, posted, postAs) } });
+      if (existing) existing.registration.update(button(runId, workspaceId, posted, postAs));
+      const registration = existing?.registration ?? client.addComposerPill({ id: "review", workspaceId, agentId, button: { icon: "ClipboardCheck", ...button(runId, workspaceId, posted, postAs) } });
       pills.set(agentId, { registration, key, target: postAs ? { runId, itemKey } : null });
     }
     for (const listener of listeners) listener();

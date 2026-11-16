@@ -1,8 +1,8 @@
 import type { PluginTimelineItemProps } from "@getpaseo/plugin/client";
 import { Pressable, Text, View } from "react-native";
 import { z } from "zod";
-import { openScreen } from "./nav";
-import { REVIEW_SCREEN } from "./ReviewScreen";
+import { openReview } from "./nav";
+import { snapshot } from "./useInbox";
 
 export const REVIEW_CARD = "inbox-review";
 export const ReviewCardSchema = z.object({ runId: z.string(), headline: z.string(), title: z.string(), pr: z.string() });
@@ -17,7 +17,7 @@ export function ReviewCard({ item, theme }: PluginTimelineItemProps<z.infer<type
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={`Open the review of ${data.pr}`}
-      onPress={() => openScreen({ screenId: REVIEW_SCREEN, params: { runId: data.runId } })}
+      onPress={() => openReview(data.runId, snapshot()?.runs.find((run) => run.id === data.runId)?.workspaceId)}
       style={{ borderWidth: 1, borderColor: theme.colors.accent, borderRadius: 10, padding: 12, gap: 4, marginVertical: 6 }}
     >
       <Text style={{ color: theme.colors.foregroundMuted, fontSize: 12 }}>Review draft ready · {data.pr}</Text>
