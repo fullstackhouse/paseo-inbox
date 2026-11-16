@@ -5,8 +5,7 @@ import { useMemo, useState, useSyncExternalStore } from "react";
 import { Pressable, Text, View } from "react-native";
 import type { Severity } from "../shared/review";
 import type { DraftCard, DraftChange } from "../shared/timeline";
-import { openScreen } from "./nav";
-import { REVIEW_SCREEN } from "./ReviewScreen";
+import { openReview } from "./nav";
 import { MONO, Pill, severityColor, verdictColor } from "./ui";
 import { snapshot, subscribe } from "./useInbox";
 
@@ -24,7 +23,8 @@ export function DraftChangeCard({ item, theme, layout, agentId }: PluginTimeline
   const card = item.data;
   const styles = useMemo(() => makeStyles(theme, layout.compact), [theme, layout.compact]);
   const view = useSyncExternalStore(subscribe, snapshot);
-  const runId = view && [...view.runs].reverse().find((run) => run.agentId === agentId)?.id;
+  const run = view && [...view.runs].reverse().find((candidate) => candidate.agentId === agentId);
+  const runId = run?.id;
   const [unfolded, setUnfolded] = useState(false);
   const changes = card.tool === "draft" && !unfolded ? card.changes.slice(0, FOLDED) : card.changes;
   const hidden = card.changes.length - changes.length;
@@ -65,7 +65,7 @@ export function DraftChangeCard({ item, theme, layout, agentId }: PluginTimeline
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="Open review"
-            onPress={() => openScreen({ screenId: REVIEW_SCREEN, params: { runId } })}
+            onPress={() => openReview(runId, run?.workspaceId)}
             style={styles.button}
           >
             <Text style={styles.buttonText}>Open review</Text>

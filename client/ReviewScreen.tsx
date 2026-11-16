@@ -41,7 +41,7 @@ import { useOpenUrl } from "./openUrl";
 import { ago, Chip, MONO, Pill, verdictColor } from "./ui";
 import { useInbox } from "./useInbox";
 
-export const REVIEW_SCREEN = "review";
+export { REVIEW_SCREEN } from "./nav";
 
 type Tab = "summary" | "walkthrough" | "since" | "files" | "description" | "github" | "comments" | "preview";
 
