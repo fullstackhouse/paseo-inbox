@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { GithubSource, PrDetailsCache, queryArgs, summarizeChecks } from "../server/github";
+import { prState } from "../shared/review";
 
 import { fetchPrUpstream } from "../server/upstream";
 import { PrUpstreamSchema } from "../shared/upstream";
@@ -400,5 +401,16 @@ describe("PrDetailsCache", () => {
     sha = "def";
     await cache.get("acme/shop", 7);
     expect(run).toHaveBeenCalledTimes(8);
+  });
+
+  it("reports when the PR was merged or closed", async () => {
+    const merged = { ...pull("abc"), closed_at: "2026-11-16T17:13:42Z", merged_at: "2026-11-16T17:13:41Z" };
+    const run = vi.fn(async (args: string[]) =>
+      JSON.stringify(args.some((arg) => arg.includes("/files")) ? [[]] : args.some((arg) => arg.includes("/comments")) ? [[]] : merged),
+    );
+    const details = await new PrDetailsCache(run).get("acme/shop", 7);
+    expect(prState(details)).toEqual({ state: "merged", at: "2026-11-16T17:13:41Z" });
+    expect(prState({ ...details, mergedAt: null })).toEqual({ state: "closed", at: "2026-11-16T17:13:42Z" });
+    expect(prState({ ...details, mergedAt: null, closedAt: null })).toEqual({ state: "open", at: "2026-11-04T10:00:00Z" });
   });
 });

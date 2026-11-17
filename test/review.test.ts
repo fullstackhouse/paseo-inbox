@@ -170,7 +170,7 @@ function setup() {
   return { inbox, reviews, state: () => state };
 }
 const raw = { verdict: "request-changes", confidence: 80, summary: "s", comments: [{ path: PATH, line: 11, severity: "blocker", body: "b" }, { path: PATH, line: 99, body: "off" }] };
-const details = (headSha: string): PrDetails => ({ body: "", author: "ola", baseRef: "main", headRef: "x", headSha, additions: 1, deletions: 0, changedFiles: 1, createdAt: NOW, files: files.map((file) => ({ status: "modified", additions: 1, deletions: 0, ...file })), threads: [], title: "t", requestedReviewers: [] });
+const details = (headSha: string): PrDetails => ({ body: "", author: "ola", baseRef: "main", headRef: "x", headSha, additions: 1, deletions: 0, changedFiles: 1, createdAt: NOW, closedAt: null, mergedAt: null, files: files.map((file) => ({ status: "modified", additions: 1, deletions: 0, ...file })), threads: [], title: "t", requestedReviewers: [] });
 
 describe("MCP tools", () => {
   it("draft saves for the calling run; revise reports refusals; others are refused", async () => {

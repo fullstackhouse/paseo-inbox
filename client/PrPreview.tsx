@@ -9,7 +9,7 @@ import { FileDiff, type DiffActions } from "./FileDiff";
 import { GitHubTab } from "./GitHubTab";
 import { Markdown } from "./Markdown";
 import { useOpenUrl } from "./openUrl";
-import { ago, Chip, MONO } from "./ui";
+import { ago, Chip, MONO, PrStatePill } from "./ui";
 
 type Preview = { repo: string; number: number; url: string; details: PrDetails };
 type Tab = "description" | "files" | "github";
@@ -82,7 +82,10 @@ export function PrPreview(props: {
     <View style={{ flex: 1, backgroundColor: theme.colors.surface0 }}>
       <ScrollView stickyHeaderIndices={[1]} contentContainerStyle={{ paddingBottom: 24 }}>
         <View style={{ paddingHorizontal: pad, paddingTop: pad, paddingBottom: 10, gap: 8, ...width }}>
-          <Text style={muted}>{prLabel} · no review yet</Text>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <Text style={muted}>{prLabel} · no review yet</Text>
+            {details ? <PrStatePill theme={theme} details={details} /> : null}
+          </View>
           <Text style={{ color: theme.colors.foreground, fontSize: compact ? 18 : 22, fontWeight: "700", lineHeight: compact ? 24 : 28 }}>
             {details?.title || prLabel}
           </Text>
