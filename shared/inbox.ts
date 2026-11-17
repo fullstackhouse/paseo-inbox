@@ -402,6 +402,8 @@ export const InboxViewSchema = z.object({
   drafts: z.array(z.string()).optional(),
   /** Runs waiting on the human with a draft, and the verdict it posts as. */
   postable: z.record(z.string(), VerdictSchema).optional(),
+  /** The signed-in GitHub login, once known: the list shows PRs it authored apart from the rest. */
+  me: z.string().optional(),
 });
 export type InboxView = z.infer<typeof InboxViewSchema>;
 
@@ -419,6 +421,9 @@ export const addCheckout = defineRpc({ name: "inbox.checkout_add", input: z.obje
 export const pollNow = defineRpc({ name: "inbox.poll_now", input: z.object({}), output: InboxViewSchema });
 
 // ---------- View helpers ----------
+
+/** Whether `me` authored the PR; false while the login or the author is unknown. */
+export const isMine = (pr: Pr | undefined, me: string | undefined) => Boolean(me && pr?.author && pr.author.toLowerCase() === me.toLowerCase());
 
 export const STATE_ORDER: RunState[] = ["needs-decision", "running", "queued", "manual", "no-checkout", "failed", "stale", "done", "skipped"];
 

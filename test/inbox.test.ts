@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ConfigSchema, DISMISSED, draftsReviews, globToRegExp, groupRuns, matchesQuery, mismatch, needsDecisionCount, opensReview, plan, renderPrompt, requeue, reviewPill, reviewRunFor, runId, setRun, startable, type Run } from "../shared/inbox";
+import { ConfigSchema, DISMISSED, draftsReviews, globToRegExp, groupRuns, isMine, matchesQuery, mismatch, needsDecisionCount, opensReview, plan, renderPrompt, requeue, reviewPill, reviewRunFor, runId, setRun, startable, type Run } from "../shared/inbox";
 import { config, emptyState, later, NOW, pr } from "./fixtures";
 
 const states = (state: ReturnType<typeof plan>) => state.runs.map((run) => [run.rule, run.version, run.state]);
@@ -118,6 +118,14 @@ describe("plan", () => {
     let state = plan({ config: manual, results: { review: [pr()] }, state: emptyState(), now: NOW });
     state = plan({ config: manual, results: { review: [] }, state, now: later(5) });
     expect(states(state)).toEqual([["draft-review", "aaaaaaa111", "done"]]);
+  });
+
+  it("tells your PRs by author, case-insensitively, and none while the login is unknown", () => {
+    expect(isMine(pr({ author: "Dawid" }), "dawid")).toBe(true);
+    expect(isMine(pr({ author: "kasia" }), "dawid")).toBe(false);
+    expect(isMine(pr({ author: "dawid" }), undefined)).toBe(false);
+    expect(isMine(pr({ author: "" }), "")).toBe(false);
+    expect(isMine(undefined, "dawid")).toBe(false);
   });
 
   it("keeps items from a source that failed to poll, and forgets items unseen for 7 days", () => {

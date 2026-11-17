@@ -25,6 +25,16 @@ function harness(results: Record<string, Pr[]> = {}, overrides: Partial<InboxDep
 }
 
 describe("Inbox", () => {
+  it("puts the signed-in login in the view once a poll gets it, and leaves it out while unknown", async () => {
+    const { inbox } = harness({}, { me: async () => "dawid" });
+    expect(inbox.view().me).toBeUndefined();
+    await inbox.poll();
+    expect(inbox.view().me).toBe("dawid");
+    const offline = harness({}, { me: async () => Promise.reject(new Error("gh not logged in")) });
+    await offline.inbox.poll();
+    expect(offline.inbox.view()).not.toHaveProperty("me");
+  });
+
   it("starts a matching PR in its checkout with the rendered prompt and provider", async () => {
     const { inbox, started, saved } = harness({ review: [pr()] });
     await inbox.poll();

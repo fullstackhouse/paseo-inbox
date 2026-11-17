@@ -55,6 +55,8 @@ export class Inbox {
   private lastPollAt: string | null = null;
   private errors: string[] = [];
   private polling: Promise<void> | null = null;
+  /** The signed-in login for `view().me`, looked up on the first poll that gets it. */
+  private login: string | null = null;
   /** Per settled run: the PR's `updatedAt` when it was last checked for a new request. A request bumps it. */
   private readonly checked = new Map<string, string>();
   private readonly now: () => string;
@@ -69,7 +71,7 @@ export class Inbox {
   }
 
   view(): InboxView {
-    return { items: this.state.items, runs: this.state.runs, lastPollAt: this.lastPollAt, errors: this.errors, reviewRules: this.reviewRules(), drafts: this.settledDrafts(), postable: this.postable() };
+    return { items: this.state.items, runs: this.state.runs, lastPollAt: this.lastPollAt, errors: this.errors, reviewRules: this.reviewRules(), drafts: this.settledDrafts(), postable: this.postable(), ...(this.login ? { me: this.login } : {}) };
   }
 
   /**
@@ -118,6 +120,7 @@ export class Inbox {
 
   private async pollOnce(): Promise<void> {
     const errors: string[] = [];
+    if (!this.login && this.deps.me) this.login = await this.deps.me().catch(() => null);
     let config: Config | null;
     try {
       config = this.deps.loadConfig();

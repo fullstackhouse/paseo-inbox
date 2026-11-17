@@ -2,7 +2,7 @@ import type { PluginScreenProps } from "@getpaseo/plugin/client";
 import { useRpc, useSettings } from "@getpaseo/plugin/client";
 import { useEffect, useMemo, useState } from "react";
 import { Pressable, ScrollView, Text, TextInput, View } from "react-native";
-import { addCheckout, addPr, findCheckout, groupRuns, isUnconfigured, matchesQuery, opensReview, parsePrRef, runNow, skipRun, type Run, type RunState } from "../shared/inbox";
+import { addCheckout, addPr, findCheckout, groupRuns, isMine, isUnconfigured, matchesQuery, opensReview, parsePrRef, runNow, skipRun, type Run, type RunState } from "../shared/inbox";
 import { postReview } from "../shared/review";
 import { inboxSettings } from "../shared/settings";
 import { openScreen } from "./nav";
@@ -55,13 +55,24 @@ export function InboxScreen({ theme, layout, navigation }: PluginScreenProps) {
   const [showSettled, setShowSettled] = useState(false);
   // The link field doubles as search: while it holds text, every run that matches shows, settled ones too.
   const query = link.trim();
-  const groups = useMemo(
-    () => (query ? groupRuns(view?.runs ?? []).map((group) => ({ ...group, runs: group.runs.filter((run) => matchesQuery(run, view?.items[run.itemKey]?.pr, query)) })).filter((group) => group.runs.length) : groupRuns(view?.runs ?? [])),
-    [view, query],
-  );
+  // Once the login is known, PRs you authored list apart from the ones you're asked to review.
+  const sections = useMemo(() => {
+    const runs = view?.runs ?? [];
+    const grouped = (subset: Run[]) =>
+      query ? groupRuns(subset).map((group) => ({ ...group, runs: group.runs.filter((run) => matchesQuery(run, view?.items[run.itemKey]?.pr, query)) })).filter((group) => group.runs.length) : groupRuns(subset);
+    if (!view?.me) return [{ key: "all", title: null, runs, groups: grouped(runs) }];
+    const mine = (run: Run) => isMine(view.items[run.itemKey]?.pr, view.me);
+    const others = runs.filter((run) => !mine(run));
+    const own = runs.filter(mine);
+    return [
+      { key: "review", title: "To review", runs: others, groups: grouped(others) },
+      { key: "mine", title: "Your PRs", runs: own, groups: grouped(own) },
+    ];
+  }, [view, query]);
   const settled = new Set<RunState>(["done", "skipped", "stale"]);
-  const shown = groups.filter((group) => query || showSettled || !settled.has(group.state));
-  const hidden = groups.filter((group) => settled.has(group.state)).reduce((sum, group) => sum + group.runs.length, 0);
+  const shownGroups = (groups: (typeof sections)[number]["groups"]) => groups.filter((group) => query || showSettled || !settled.has(group.state));
+  const shownCount = sections.reduce((sum, section) => sum + shownGroups(section.groups).length, 0);
+  const hidden = sections.flatMap((section) => section.groups).filter((group) => settled.has(group.state)).reduce((sum, group) => sum + group.runs.length, 0);
   const missing = useMemo(() => [...new Set((view?.runs ?? []).filter((run) => run.state === "no-checkout").map((run) => view?.items[run.itemKey]?.pr.repo).filter((repo): repo is string => Boolean(repo)))].sort().join(","), [view]);
   useEffect(() => {
     if (!missing) return;
@@ -73,9 +84,6 @@ export function InboxScreen({ theme, layout, navigation }: PluginScreenProps) {
   }, [missing, find]);
   const pad = layout.compact ? 12 : 24;
   const muted = { color: theme.colors.foregroundMuted, fontSize: 13 };
-  const candidates = (view?.runs ?? []).filter(postable);
-  // A run that got posted, dismissed or re-drafted elsewhere drops out of the selection.
-  const selected = candidates.filter((run) => picked.has(run.id));
   const toggle = (id: string) => setPicked((prev) => {
     const next = new Set(prev);
     if (next.has(id)) next.delete(id);
@@ -84,7 +92,7 @@ export function InboxScreen({ theme, layout, navigation }: PluginScreenProps) {
   });
 
   /** One `inbox.review_post` per run, in order: each still checks the live head and refuses a stale draft. */
-  const postSelected = async () => {
+  const postSelected = async (selected: Run[]) => {
     setActionError(null);
     const failures: string[] = [];
     for (const [index, run] of selected.entries()) {
@@ -223,32 +231,54 @@ export function InboxScreen({ theme, layout, navigation }: PluginScreenProps) {
       {[error, actionError, ...(view?.errors ?? [])].filter(Boolean).map((message) => (
         <Text key={message} style={{ color: theme.colors.statusDanger, fontSize: 13 }}>{message}</Text>
       ))}
-      {view && !shown.length ? <Text style={muted}>{!query ? "Nothing to do." : parsePrRef(query) ? "No run for this PR yet. Review queues one." : "No run matches."}</Text> : null}
-      {shown.map((group) => (
-        <View key={group.state} style={{ gap: 6 }}>
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 8, minHeight: 28 }}>
-            <Text style={{ color: theme.colors.foregroundMuted, fontSize: 12, fontWeight: "600", letterSpacing: 0.5, flex: 1 }}>
-              {HEADINGS[group.state].toUpperCase()}  {group.runs.length}
-            </Text>
-            {group.state === "needs-decision" && candidates.length > 1 ? (
-              <Chip
-                theme={theme}
-                label={selected.length === candidates.length ? "Select none" : `Select all ${candidates.length} drafts`}
-                disabled={posting !== null}
-                style={{ paddingVertical: 4, paddingHorizontal: 10 }}
-                textStyle={{ fontSize: 12 }}
-                onPress={() => setPicked(selected.length === candidates.length ? new Set() : new Set(candidates.map((run) => run.id)))}
-              />
-            ) : null}
-            {group.state === "needs-decision" && selected.length ? (
-              <Chip theme={theme} active label={posting ?? `Post ${selected.length} review${selected.length === 1 ? "" : "s"}`} disabled={posting !== null} style={{ paddingVertical: 4, paddingHorizontal: 10 }} textStyle={{ fontSize: 12 }} onPress={() => void postSelected()} />
-            ) : null}
+      {view && !shownCount ? <Text style={muted}>{!query ? "Nothing to do." : parsePrRef(query) ? "No run for this PR yet. Review queues one." : "No run matches."}</Text> : null}
+      {sections.map((section) => {
+        const groups = shownGroups(section.groups);
+        if (!groups.length) return null;
+        const candidates = section.runs.filter(postable);
+        // A run that got posted, dismissed or re-drafted elsewhere drops out of the selection.
+        const selected = candidates.filter((run) => picked.has(run.id));
+        return (
+          <View key={section.key} style={{ gap: 14 }}>
+            {section.title ? <Text style={{ color: theme.colors.foreground, fontSize: 16, fontWeight: "600" }}>{section.title}</Text> : null}
+            {groups.map((group) => (
+              <View key={group.state} style={{ gap: 6 }}>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 8, minHeight: 28 }}>
+                  <Text style={{ color: theme.colors.foregroundMuted, fontSize: 12, fontWeight: "600", letterSpacing: 0.5, flex: 1 }}>
+                    {HEADINGS[group.state].toUpperCase()}  {group.runs.length}
+                  </Text>
+                  {group.state === "needs-decision" && candidates.length > 1 ? (
+                    <Chip
+                      theme={theme}
+                      label={selected.length === candidates.length ? "Select none" : `Select all ${candidates.length} drafts`}
+                      disabled={posting !== null}
+                      style={{ paddingVertical: 4, paddingHorizontal: 10 }}
+                      textStyle={{ fontSize: 12 }}
+                      onPress={() =>
+                        setPicked((prev) => {
+                          const next = new Set(prev);
+                          const all = selected.length === candidates.length;
+                          for (const run of candidates) {
+                            if (all) next.delete(run.id);
+                            else next.add(run.id);
+                          }
+                          return next;
+                        })
+                      }
+                    />
+                  ) : null}
+                  {group.state === "needs-decision" && selected.length ? (
+                    <Chip theme={theme} active label={posting ?? `Post ${selected.length} review${selected.length === 1 ? "" : "s"}`} disabled={posting !== null} style={{ paddingVertical: 4, paddingHorizontal: 10 }} textStyle={{ fontSize: 12 }} onPress={() => void postSelected(selected)} />
+                  ) : null}
+                </View>
+                {group.runs.map((run) => (
+                  <Row key={run.id} run={run} />
+                ))}
+              </View>
+            ))}
           </View>
-          {group.runs.map((run) => (
-            <Row key={run.id} run={run} />
-          ))}
-        </View>
-      ))}
+        );
+      })}
       {hidden && !query ? <Chip theme={theme} label={showSettled ? "Hide done, stale and skipped" : `Show done, stale and skipped (${hidden})`} onPress={() => setShowSettled(!showSettled)} style={{ alignSelf: "flex-start" }} /> : null}
     </ScrollView>
   );
