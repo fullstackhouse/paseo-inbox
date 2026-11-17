@@ -186,7 +186,7 @@ async function drafted(overrides: Partial<InboxDeps> = {}, results: () => Pr[] =
   return { inbox, reviews, state: () => state, runId: state.runs[0]!.id };
 }
 
-const details = (headSha: string, files: PrFile[]): PrDetails => ({ body: "", author: "ola", baseRef: "main", headRef: "x", headSha, additions: 1, deletions: 0, changedFiles: files.length, createdAt: NOW, files, threads: [], title: "t", requestedReviewers: [] });
+const details = (headSha: string, files: PrFile[]): PrDetails => ({ body: "", author: "ola", baseRef: "main", headRef: "x", headSha, additions: 1, deletions: 0, changedFiles: files.length, createdAt: NOW, closedAt: null, mergedAt: null, files, threads: [], title: "t", requestedReviewers: [] });
 
 describe("postable drafts", () => {
   it("lists a draft waiting on the human with the verdict it posts as, until it is posted", async () => {

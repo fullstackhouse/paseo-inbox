@@ -41,7 +41,7 @@ import { FileIndex } from "./FileIndex";
 import { Markdown } from "./Markdown";
 import { PrPreview } from "./PrPreview";
 import { useOpenUrl } from "./openUrl";
-import { ago, Chip, MONO, Pill, STICKY, verdictColor } from "./ui";
+import { ago, Chip, MONO, Pill, PrStatePill, STICKY, verdictColor } from "./ui";
 import { useInbox } from "./useInbox";
 import { useScreenKeys } from "./useScreenKeys";
 
@@ -607,6 +607,7 @@ export function ReviewScreen({ theme, layout, navigation, params }: PluginScreen
             {stale ? <Pill theme={theme} color={theme.colors.statusWarning}>new commits since this draft</Pill> : null}
             {draft?.reviewedVersion && draft.reviewedVersion !== draft.version ? <Pill theme={theme} color={theme.colors.foregroundMuted}>summary written for {draft.reviewedVersion.slice(0, 7)}</Pill> : null}
             {draft?.postedUrl ? <Pill theme={theme} color={theme.colors.statusSuccess}>posted</Pill> : null}
+            {details ? <PrStatePill theme={theme} details={details} /> : null}
             {run.trusted === false ? <Pill theme={theme} color={theme.colors.statusWarning}>read-only run: author not trusted</Pill> : null}
             {details?.threads.length ? <Pill theme={theme} color={theme.colors.foregroundMuted}>{details.threads.length} comments from others</Pill> : null}
             <View style={{ flex: 1 }} />

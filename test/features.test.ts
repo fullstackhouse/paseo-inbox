@@ -24,6 +24,8 @@ const details = (headSha = "aaaaaaa111"): PrDetails => ({
   deletions: 0,
   changedFiles: 1,
   createdAt: NOW,
+  closedAt: null,
+  mergedAt: null,
   files,
   threads: [{ id: 501, path: PATH, line: 11, side: "RIGHT", author: "kuba", body: "State is lost on refresh.", url: "https://x/501", inReplyTo: null }],
   title: "Basket",

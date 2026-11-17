@@ -148,6 +148,8 @@ const PullSchema = z.object({
   deletions: z.number(),
   changed_files: z.number(),
   created_at: z.string(),
+  closed_at: z.string().nullish(),
+  merged_at: z.string().nullish(),
   title: z.string().nullish(),
   requested_reviewers: z.array(z.object({ login: z.string() })).nullish(),
   assignees: z.array(z.object({ login: z.string() })).nullish(),
@@ -199,6 +201,8 @@ export class PrDetailsCache {
       deletions: pull.deletions,
       changedFiles: pull.changed_files,
       createdAt: pull.created_at,
+      closedAt: pull.closed_at ?? null,
+      mergedAt: pull.merged_at ?? null,
       files,
       threads,
     };

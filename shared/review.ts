@@ -493,6 +493,9 @@ export const PrDetailsSchema = z.object({
   deletions: z.number(),
   changedFiles: z.number(),
   createdAt: z.string(),
+  /** Set once the PR is closed; `mergedAt` too when it was merged. */
+  closedAt: z.string().nullable().default(null),
+  mergedAt: z.string().nullable().default(null),
   files: z.array(PrFileSchema),
   /** Inline comments other reviewers already left on the PR (the latest comment of each thread start). */
   threads: z
@@ -503,6 +506,13 @@ export const PrDetailsSchema = z.object({
 });
 export type PrDetails = z.infer<typeof PrDetailsSchema>;
 export type PrThread = PrDetails["threads"][number];
+
+/** Where the PR stands on GitHub, with the time it got there. */
+export function prState(details: Pick<PrDetails, "createdAt" | "closedAt" | "mergedAt">): { state: "open" | "merged" | "closed"; at: string } {
+  if (details.mergedAt) return { state: "merged", at: details.mergedAt };
+  if (details.closedAt) return { state: "closed", at: details.closedAt };
+  return { state: "open", at: details.createdAt };
+}
 
 /** The PR as an untrusted reviewer reads it: description, files and diff, and what others already said. */
 export function prContext(pr: { url: string; title: string }, details: PrDetails, maxChars = 180_000): string {

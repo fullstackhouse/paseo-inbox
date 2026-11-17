@@ -1,7 +1,7 @@
 import type { PluginTheme } from "@getpaseo/plugin";
 import type { ReactNode } from "react";
 import { Platform, Pressable, Text, type StyleProp, type TextStyle, type ViewStyle } from "react-native";
-import type { Severity } from "../shared/review";
+import { prState, type PrDetails, type Severity } from "../shared/review";
 
 export const MONO = Platform.select({ ios: "Menlo", android: "monospace", default: "ui-monospace, SFMono-Regular, Menlo, monospace" });
 
@@ -32,6 +32,13 @@ export function Pill({ theme, color, children }: { theme: PluginTheme; color: st
       {children}
     </Text>
   );
+}
+
+/** "merged 22h ago" / "closed 3d ago"; nothing while the PR is open. */
+export function PrStatePill({ theme, details }: { theme: PluginTheme; details: Pick<PrDetails, "createdAt" | "closedAt" | "mergedAt"> }) {
+  const { state, at } = prState(details);
+  if (state === "open") return null;
+  return <Pill theme={theme} color={state === "merged" ? theme.colors.statusSuccess : theme.colors.statusDanger}>{state} {ago(at)} ago</Pill>;
 }
 
 export function Chip({ theme, label, onPress, active, style, textStyle, accessibilityLabel, disabled }: { theme: PluginTheme; label: string; onPress: () => void; active?: boolean; style?: StyleProp<ViewStyle>; textStyle?: StyleProp<TextStyle>; accessibilityLabel?: string; disabled?: boolean }) {
