@@ -17,6 +17,7 @@ const HEADINGS: Record<RunState, string> = {
   "needs-decision": "Needs a decision",
   running: "Running",
   queued: "Queued",
+  manual: "Waiting for Run now",
   "no-checkout": "No local checkout",
   failed: "Failed",
   stale: "Stale",

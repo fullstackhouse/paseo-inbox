@@ -79,7 +79,7 @@ export const PrSchema = z.object({
 });
 export type Pr = z.infer<typeof PrSchema>;
 
-export const RunStateSchema = z.enum(["queued", "running", "needs-decision", "done", "failed", "skipped", "stale", "no-checkout"]);
+export const RunStateSchema = z.enum(["queued", "running", "needs-decision", "done", "failed", "skipped", "stale", "no-checkout", "manual"]);
 export type RunState = z.infer<typeof RunStateSchema>;
 
 export const RunSchema = z.object({
@@ -108,12 +108,12 @@ export type State = z.infer<typeof StateSchema>;
 export const emptyState = (): State => ({ items: {}, runs: [] });
 
 /** Runs whose agent produced something for the human, or nothing yet. */
-const OPEN_STATES: ReadonlySet<RunState> = new Set(["queued", "running", "needs-decision", "no-checkout"]);
+const OPEN_STATES: ReadonlySet<RunState> = new Set(["queued", "running", "needs-decision", "no-checkout", "manual"]);
 /** States of runs that never started an agent, so a poll may change its mind about them. */
-const REDECIDED: ReadonlySet<RunState> = new Set(["skipped", "no-checkout"]);
+const REDECIDED: ReadonlySet<RunState> = new Set(["skipped", "no-checkout", "manual"]);
 const KEEP_DAYS = 7;
 /** States a run leaves when its PR leaves the source; a running agent finishes on its own. */
-const LEAVES: ReadonlySet<RunState> = new Set(["queued", "needs-decision", "no-checkout", "skipped", "failed", "stale"]);
+const LEAVES: ReadonlySet<RunState> = new Set(["queued", "needs-decision", "no-checkout", "manual", "skipped", "failed", "stale"]);
 /** Reason on a run the human dismissed: later pushes don't queue that rule for that PR again. */
 export const DISMISSED = "dismissed";
 
@@ -169,7 +169,7 @@ export interface PlanInput {
 
 /**
  * The next state after a poll: items refreshed, older versions of open runs marked stale, and new
- * runs added (queued, skipped, or no-checkout). Never starts anything; `startable` picks what to start.
+ * runs added (queued, manual, skipped, or no-checkout). Never starts anything; `startable` picks what to start.
  */
 export function plan({ config, results, state, now }: PlanInput): State {
   const items: Record<string, Item> = { ...state.items };
@@ -212,8 +212,9 @@ export function plan({ config, results, state, now }: PlanInput): State {
       let next: Run | null;
       if (!rule) next = { ...base, state: "skipped", reason: reasons.join("; ") };
       else if (dismissed(earlier)) next = null;
-      else if (rule.rerun === "once" && earlier.some((run) => run.state !== "skipped" && run.state !== "no-checkout")) next = null;
-      else if (rule.rerun === "manual") next = { ...base, state: "skipped", reason: "manual rule: use Run now" };
+      else if (rule.rerun === "once" && earlier.some((run) => !REDECIDED.has(run.state))) next = null;
+      // A manual rule's match waits in view for Run now; "skipped" is only for PRs no rule matched.
+      else if (rule.rerun === "manual") next = { ...base, state: "manual", reason: "manual rule: use Run now" };
       else if (!checkouts.has(pr.repo.toLowerCase())) next = { ...base, state: "no-checkout", reason: noCheckoutReason(pr.repo) };
       else next = { ...base, state: "queued" };
 
@@ -251,7 +252,7 @@ export function plan({ config, results, state, now }: PlanInput): State {
 
 /** The latest run that got anywhere was dismissed: a push doesn't bring it back, only being asked again does. */
 function dismissed(runs: readonly Run[]): boolean {
-  const latest = runs.filter((run) => run.state !== "skipped" && run.state !== "no-checkout").sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
+  const latest = runs.filter((run) => !REDECIDED.has(run.state)).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
   return latest?.state === "done" && latest.reason === DISMISSED;
 }
 
@@ -419,7 +420,7 @@ export const pollNow = defineRpc({ name: "inbox.poll_now", input: z.object({}), 
 
 // ---------- View helpers ----------
 
-export const STATE_ORDER: RunState[] = ["needs-decision", "running", "queued", "no-checkout", "failed", "stale", "done", "skipped"];
+export const STATE_ORDER: RunState[] = ["needs-decision", "running", "queued", "manual", "no-checkout", "failed", "stale", "done", "skipped"];
 
 /** Latest run per (item, rule), grouped by state in display order. */
 export function groupRuns(runs: readonly Run[]): { state: RunState; runs: Run[] }[] {

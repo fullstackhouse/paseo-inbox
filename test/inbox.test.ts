@@ -98,10 +98,26 @@ describe("plan", () => {
     expect(state.runs[0]).toMatchObject({ state: "queued", reason: undefined });
   });
 
-  it("records manual rules as skipped until Run now", () => {
+  it("holds manual rules' matches as manual until Run now, not skipped", () => {
     const manual = config({ rules: [{ name: "draft-review", source: "review", prompt: "x", rerun: "manual" }] });
     const state = plan({ config: manual, results: { review: [pr()] }, state: emptyState(), now: NOW });
-    expect(state.runs[0]).toMatchObject({ state: "skipped", reason: "manual rule: use Run now" });
+    expect(state.runs[0]).toMatchObject({ state: "manual", reason: "manual rule: use Run now" });
+    expect(groupRuns(state.runs).map((group) => group.state)).toEqual(["manual"]);
+  });
+
+  it("moves a manual match an older version recorded as skipped to manual on the next poll", () => {
+    const manual = config({ rules: [{ name: "draft-review", source: "review", prompt: "x", rerun: "manual" }] });
+    let state = plan({ config: manual, results: { review: [pr()] }, state: emptyState(), now: NOW });
+    state = { ...state, runs: state.runs.map((run) => ({ ...run, state: "skipped" as const })) };
+    state = plan({ config: manual, results: { review: [pr()] }, state, now: later(5) });
+    expect(states(state)).toEqual([["draft-review", "aaaaaaa111", "manual"]]);
+  });
+
+  it("closes a manual run once its PR leaves the source", () => {
+    const manual = config({ rules: [{ name: "draft-review", source: "review", prompt: "x", rerun: "manual" }] });
+    let state = plan({ config: manual, results: { review: [pr()] }, state: emptyState(), now: NOW });
+    state = plan({ config: manual, results: { review: [] }, state, now: later(5) });
+    expect(states(state)).toEqual([["draft-review", "aaaaaaa111", "done"]]);
   });
 
   it("keeps items from a source that failed to poll, and forgets items unseen for 7 days", () => {
