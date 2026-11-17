@@ -2,7 +2,7 @@ import type { PluginScreenProps } from "@getpaseo/plugin/client";
 import { useRpc, useSettings } from "@getpaseo/plugin/client";
 import { useEffect, useMemo, useState } from "react";
 import { Pressable, ScrollView, Text, TextInput, View } from "react-native";
-import { addCheckout, addPr, findCheckout, groupRuns, isMine, isUnconfigured, matchesQuery, runsFor, SETTLED_STATES, whoseCounts, type Whose, opensReview, parsePrRef, runNow, skipRun, type Run, type RunState } from "../shared/inbox";
+import { addCheckout, addPr, findCheckout, groupRuns, isMine, isUnconfigured, listedRuns, matchesQuery, SETTLED_STATES, whoseCounts, type Whose, opensReview, parsePrRef, runNow, skipRun, type Run, type RunState } from "../shared/inbox";
 import { postReview } from "../shared/review";
 import { inboxSettings } from "../shared/settings";
 import { openScreen } from "./nav";
@@ -56,9 +56,8 @@ export function InboxScreen({ theme, layout, navigation }: PluginScreenProps) {
   const [whose, setWhose] = useState<Whose>("all");
   // The link field doubles as search: while it holds text, every run that matches shows, settled ones too.
   const query = link.trim();
-  // The filter chips need the login to tell your PRs apart; until a poll gets it, every run shows.
-  const filtering = Boolean(view?.me) && whose !== "all";
-  const filtered = useMemo(() => (view && filtering ? runsFor(whose, view) : (view?.runs ?? [])), [view, whose, filtering]);
+  // The chips filter the list once a poll knows the login; a search ignores them (`listedRuns`).
+  const filtered = useMemo(() => (view ? listedRuns(whose, view, query) : []), [view, whose, query]);
   const counts = useMemo(() => (view?.me ? whoseCounts(view) : null), [view]);
   const groups = useMemo(
     () => (query ? groupRuns(filtered).map((group) => ({ ...group, runs: group.runs.filter((run) => matchesQuery(run, view?.items[run.itemKey]?.pr, query)) })).filter((group) => group.runs.length) : groupRuns(filtered)),

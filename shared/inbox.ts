@@ -435,6 +435,14 @@ export function runsFor(whose: Whose, view: Pick<InboxView, "runs" | "items" | "
   return view.runs.filter((run) => isMine(view.items[run.itemKey]?.pr, view.me) === (whose === "mine"));
 }
 
+/**
+ * The runs the list shows. A search ignores the chip, as it ignores the settled fold: a pasted link
+ * must find its PR whatever chip is on. Before the login is known, the chips don't show, so neither does a filter.
+ */
+export function listedRuns(whose: Whose, view: Pick<InboxView, "runs" | "items" | "me">, query: string): Run[] {
+  return query.trim() || !view.me ? [...view.runs] : runsFor(whose, view);
+}
+
 /** The number on each filter chip: runs that still show without expanding the settled ones. */
 export function whoseCounts(view: Pick<InboxView, "runs" | "items" | "me">): Record<Whose, number> {
   const open = (whose: Whose) => groupRuns(runsFor(whose, view)).filter((group) => !SETTLED_STATES.has(group.state)).reduce((sum, group) => sum + group.runs.length, 0);
