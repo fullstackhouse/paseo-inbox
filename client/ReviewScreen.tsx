@@ -68,7 +68,7 @@ function ageLabel(what: string, iso: string): string {
   return age === "now" ? `${what} just now` : `${what} ${age} ago`;
 }
 
-export function ReviewScreen({ theme, layout, navigation, params }: PluginScreenProps) {
+export function ReviewScreen({ theme, layout, navigation, params, setTitle }: PluginScreenProps) {
   const { view, refresh } = useInbox(10_000);
   const [runId, setRunId] = useState(params.runId ?? "");
   useEffect(() => setRunId(params.runId ?? ""), [params.runId]);
@@ -80,6 +80,12 @@ export function ReviewScreen({ theme, layout, navigation, params }: PluginScreen
   }, [byPr, runId]);
   const run = view?.runs.find((candidate) => candidate.id === runId) ?? null;
   const pr = run ? view?.items[run.itemKey]?.pr : undefined;
+  // Name the tab after its PR, so two open reviews don't both read "Review".
+  const prLabel = pr ? `#${pr.number} ${pr.title}` : "";
+  const prTooltip = pr ? `${pr.repo}#${pr.number} ${pr.title}` : "";
+  useEffect(() => {
+    if (prLabel) setTitle?.({ label: prLabel, tooltip: prTooltip });
+  }, [prLabel, prTooltip, setTitle]);
 
   const fetchDraft = useRpc(getReview);
   const restoreDraft = useRpc(restoreRun);
