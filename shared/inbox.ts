@@ -402,7 +402,7 @@ export const InboxViewSchema = z.object({
   drafts: z.array(z.string()).optional(),
   /** Runs waiting on the human with a draft, and the verdict it posts as. */
   postable: z.record(z.string(), VerdictSchema).optional(),
-  /** The signed-in GitHub login, once known: the list shows PRs it authored apart from the rest. */
+  /** The signed-in GitHub login, once known: the list marks the PRs it authored and filters by them. */
   me: z.string().optional(),
 });
 export type InboxView = z.infer<typeof InboxViewSchema>;
