@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ConfigSchema, DISMISSED, draftsReviews, globToRegExp, groupRuns, isMine, matchesQuery, mismatch, needsDecisionCount, opensReview, plan, renderPrompt, requeue, reviewPill, reviewRunFor, runId, setRun, startable, type Run } from "../shared/inbox";
+import { ConfigSchema, DISMISSED, draftsReviews, globToRegExp, groupRuns, isMine, runsFor, whoseCounts, matchesQuery, mismatch, needsDecisionCount, opensReview, plan, renderPrompt, requeue, reviewPill, reviewRunFor, runId, setRun, startable, type Run } from "../shared/inbox";
 import { config, emptyState, later, NOW, pr } from "./fixtures";
 
 const states = (state: ReturnType<typeof plan>) => state.runs.map((run) => [run.rule, run.version, run.state]);
@@ -126,6 +126,17 @@ describe("plan", () => {
     expect(isMine(pr({ author: "dawid" }), undefined)).toBe(false);
     expect(isMine(pr({ author: "" }), "")).toBe(false);
     expect(isMine(undefined, "dawid")).toBe(false);
+  });
+
+  it("filters runs to yours or other people's, and counts only those that show without expanding", () => {
+    const prs = [pr({ number: 1, author: "dawid" }), pr({ number: 2, author: "kasia" }), pr({ number: 3, author: "Dawid" })];
+    let state = plan({ config: config(), results: { review: prs }, state: emptyState(), now: NOW });
+    state = setRun(state, state.runs.find((run) => run.itemKey === "acme/shop#3")!.id, { state: "done" }, NOW);
+    const view = { ...state, me: "dawid" };
+    expect(runsFor("mine", view).map((run) => run.itemKey).sort()).toEqual(["acme/shop#1", "acme/shop#3"]);
+    expect(runsFor("review", view).map((run) => run.itemKey)).toEqual(["acme/shop#2"]);
+    expect(runsFor("all", view)).toHaveLength(3);
+    expect(whoseCounts(view)).toEqual({ all: 2, review: 1, mine: 1 });
   });
 
   it("keeps items from a source that failed to poll, and forgets items unseen for 7 days", () => {
