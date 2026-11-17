@@ -106,6 +106,6 @@ The run prompt tells agents not to post to their PR until you say so: reviews go
 
 ## The inbox screen
 
-Runs are grouped as **Needs a decision**, Running, Queued, No local checkout, Failed, Stale, Done, and Skipped. Tapping a row opens its review draft, else its agent, else the PR on GitHub. Rows have **Run now / Rerun** and **Dismiss**. Dismiss also archives the run's workspaces and worktrees.
+Runs are grouped as **Needs a decision**, Running, Queued, Waiting for Run now, No local checkout, Failed, Stale, Done, and Skipped. Skipped means no rule matched. Once the plugin knows your GitHub login, your own PRs say **you** instead of your login, and the **All · To review · Mine** chips above the list filter it. Tapping a row opens its review draft, else its agent, else the PR on GitHub. Rows have **Run now / Rerun** and **Dismiss**. Dismiss also archives the run's workspaces and worktrees.
 
 State lives in `~/.paseo/plugin-data/inbox/state.json`. Override paths with `PASEO_INBOX_CONFIG` and `PASEO_INBOX_DIR`.

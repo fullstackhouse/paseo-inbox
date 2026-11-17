@@ -2,7 +2,7 @@ import type { PluginScreenProps } from "@getpaseo/plugin/client";
 import { useRpc, useSettings } from "@getpaseo/plugin/client";
 import { useEffect, useMemo, useState } from "react";
 import { Pressable, ScrollView, Text, TextInput, View } from "react-native";
-import { addCheckout, addPr, findCheckout, groupRuns, isUnconfigured, matchesQuery, opensReview, parsePrRef, runNow, skipRun, type Run, type RunState } from "../shared/inbox";
+import { addCheckout, addPr, findCheckout, groupRuns, isMine, isUnconfigured, listedRuns, matchesQuery, SETTLED_STATES, whoseCounts, type Whose, opensReview, parsePrRef, runNow, skipRun, type Run, type RunState } from "../shared/inbox";
 import { postReview } from "../shared/review";
 import { inboxSettings } from "../shared/settings";
 import { openScreen } from "./nav";
@@ -53,15 +53,18 @@ export function InboxScreen({ theme, layout, navigation }: PluginScreenProps) {
   const [busy, setBusy] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [showSettled, setShowSettled] = useState(false);
+  const [whose, setWhose] = useState<Whose>("all");
   // The link field doubles as search: while it holds text, every run that matches shows, settled ones too.
   const query = link.trim();
+  // The chips filter the list once a poll knows the login; a search ignores them (`listedRuns`).
+  const filtered = useMemo(() => (view ? listedRuns(whose, view, query) : []), [view, whose, query]);
+  const counts = useMemo(() => (view?.me ? whoseCounts(view) : null), [view]);
   const groups = useMemo(
-    () => (query ? groupRuns(view?.runs ?? []).map((group) => ({ ...group, runs: group.runs.filter((run) => matchesQuery(run, view?.items[run.itemKey]?.pr, query)) })).filter((group) => group.runs.length) : groupRuns(view?.runs ?? [])),
-    [view, query],
+    () => (query ? groupRuns(filtered).map((group) => ({ ...group, runs: group.runs.filter((run) => matchesQuery(run, view?.items[run.itemKey]?.pr, query)) })).filter((group) => group.runs.length) : groupRuns(filtered)),
+    [view, filtered, query],
   );
-  const settled = new Set<RunState>(["done", "skipped", "stale"]);
-  const shown = groups.filter((group) => query || showSettled || !settled.has(group.state));
-  const hidden = groups.filter((group) => settled.has(group.state)).reduce((sum, group) => sum + group.runs.length, 0);
+  const shown = groups.filter((group) => query || showSettled || !SETTLED_STATES.has(group.state));
+  const hidden = groups.filter((group) => SETTLED_STATES.has(group.state)).reduce((sum, group) => sum + group.runs.length, 0);
   const missing = useMemo(() => [...new Set((view?.runs ?? []).filter((run) => run.state === "no-checkout").map((run) => view?.items[run.itemKey]?.pr.repo).filter((repo): repo is string => Boolean(repo)))].sort().join(","), [view]);
   useEffect(() => {
     if (!missing) return;
@@ -73,7 +76,8 @@ export function InboxScreen({ theme, layout, navigation }: PluginScreenProps) {
   }, [missing, find]);
   const pad = layout.compact ? 12 : 24;
   const muted = { color: theme.colors.foregroundMuted, fontSize: 13 };
-  const candidates = (view?.runs ?? []).filter(postable);
+  // Bulk Post sends only drafts the current filter shows.
+  const candidates = filtered.filter(postable);
   // A run that got posted, dismissed or re-drafted elsewhere drops out of the selection.
   const selected = candidates.filter((run) => picked.has(run.id));
   const toggle = (id: string) => setPicked((prev) => {
@@ -170,10 +174,14 @@ export function InboxScreen({ theme, layout, navigation }: PluginScreenProps) {
               {checked ? <Text style={{ color: theme.colors.accentForeground, fontSize: 12, fontWeight: "700", lineHeight: 14 }}>✓</Text> : null}
             </Pressable>
           ) : null}
-          <Text style={{ ...muted, fontFamily: MONO, fontSize: 12, flex: 1 }} numberOfLines={1}>
-            {run.itemKey.replace(/^[^/]+\//, "")}
-            {pr?.author ? `  ·  ${pr.author}` : ""}
-          </Text>
+          <View style={{ flex: 1, flexDirection: "row", alignItems: "center", gap: 8, minWidth: 0 }}>
+            <Text style={{ ...muted, fontFamily: MONO, fontSize: 12, flexShrink: 1 }} numberOfLines={1}>
+              {run.itemKey.replace(/^[^/]+\//, "")}
+              {pr?.author && !isMine(pr, view?.me) ? `  ·  ${pr.author}` : ""}
+            </Text>
+            {/* accent on accentForeground: themes pair them for contrast; accent text alone fades on dark surfaces. */}
+            {isMine(pr, view?.me) ? <Text style={{ color: theme.colors.accentForeground, backgroundColor: theme.colors.accent, borderRadius: 999, paddingHorizontal: 7, paddingVertical: 1, fontSize: 11, fontWeight: "600", overflow: "hidden" }}>you</Text> : null}
+          </View>
           {pr ? (
             <Text style={{ fontFamily: MONO, fontSize: 12 }}>
               <Text style={{ color: theme.colors.statusSuccess }}>+{pr.additions}</Text> <Text style={{ color: theme.colors.statusDanger }}>−{pr.deletions}</Text>
@@ -220,6 +228,19 @@ export function InboxScreen({ theme, layout, navigation }: PluginScreenProps) {
         />
         <Chip theme={theme} label={adding ? "Adding…" : "Review"} disabled={adding || !parsePrRef(query)} onPress={() => void submitLink()} />
       </View>
+      {counts ? (
+        <View style={{ flexDirection: "row", gap: 8 }}>
+          {(
+            [
+              ["all", "All"],
+              ["review", "To review"],
+              ["mine", "Mine"],
+            ] as const
+          ).map(([key, label]) => (
+            <Chip key={key} theme={theme} label={`${label} ${counts[key]}`} active={whose === key} style={{ paddingVertical: 4, paddingHorizontal: 10 }} textStyle={{ fontSize: 12 }} onPress={() => setWhose(key)} />
+          ))}
+        </View>
+      ) : null}
       {[error, actionError, ...(view?.errors ?? [])].filter(Boolean).map((message) => (
         <Text key={message} style={{ color: theme.colors.statusDanger, fontSize: 13 }}>{message}</Text>
       ))}

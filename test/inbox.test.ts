@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ConfigSchema, DISMISSED, draftsReviews, globToRegExp, groupRuns, matchesQuery, mismatch, needsDecisionCount, opensReview, plan, renderPrompt, requeue, reviewPill, reviewRunFor, runId, setRun, startable, type Run } from "../shared/inbox";
+import { ConfigSchema, DISMISSED, draftsReviews, globToRegExp, groupRuns, isMine, listedRuns, runsFor, whoseCounts, matchesQuery, mismatch, needsDecisionCount, opensReview, plan, renderPrompt, requeue, reviewPill, reviewRunFor, runId, setRun, startable, type Run } from "../shared/inbox";
 import { config, emptyState, later, NOW, pr } from "./fixtures";
 
 const states = (state: ReturnType<typeof plan>) => state.runs.map((run) => [run.rule, run.version, run.state]);
@@ -118,6 +118,34 @@ describe("plan", () => {
     let state = plan({ config: manual, results: { review: [pr()] }, state: emptyState(), now: NOW });
     state = plan({ config: manual, results: { review: [] }, state, now: later(5) });
     expect(states(state)).toEqual([["draft-review", "aaaaaaa111", "done"]]);
+  });
+
+  it("tells your PRs by author, case-insensitively, and none while the login is unknown", () => {
+    expect(isMine(pr({ author: "Dawid" }), "dawid")).toBe(true);
+    expect(isMine(pr({ author: "kasia" }), "dawid")).toBe(false);
+    expect(isMine(pr({ author: "dawid" }), undefined)).toBe(false);
+    expect(isMine(pr({ author: "" }), "")).toBe(false);
+    expect(isMine(undefined, "dawid")).toBe(false);
+  });
+
+  it("filters runs to yours or other people's, and counts only those that show without expanding", () => {
+    const prs = [pr({ number: 1, author: "dawid" }), pr({ number: 2, author: "kasia" }), pr({ number: 3, author: "Dawid" })];
+    let state = plan({ config: config(), results: { review: prs }, state: emptyState(), now: NOW });
+    state = setRun(state, state.runs.find((run) => run.itemKey === "acme/shop#3")!.id, { state: "done" }, NOW);
+    const view = { ...state, me: "dawid" };
+    expect(runsFor("mine", view).map((run) => run.itemKey).sort()).toEqual(["acme/shop#1", "acme/shop#3"]);
+    expect(runsFor("review", view).map((run) => run.itemKey)).toEqual(["acme/shop#2"]);
+    expect(runsFor("all", view)).toHaveLength(3);
+    expect(whoseCounts(view)).toEqual({ all: 2, review: 1, mine: 1 });
+  });
+
+  it("lists only the chip's runs, but every run while searching or before the login is known", () => {
+    const state = plan({ config: config(), results: { review: [pr({ number: 1, author: "dawid" }), pr({ number: 2, author: "kasia" })] }, state: emptyState(), now: NOW });
+    const keys = (runs: Run[]) => runs.map((run) => run.itemKey).sort();
+    expect(keys(listedRuns("mine", { ...state, me: "dawid" }, ""))).toEqual(["acme/shop#1"]);
+    // A pasted link to someone else's PR must still find it while Mine is selected.
+    expect(keys(listedRuns("mine", { ...state, me: "dawid" }, "acme/shop#2"))).toEqual(["acme/shop#1", "acme/shop#2"]);
+    expect(keys(listedRuns("mine", state, ""))).toEqual(["acme/shop#1", "acme/shop#2"]);
   });
 
   it("keeps items from a source that failed to poll, and forgets items unseen for 7 days", () => {

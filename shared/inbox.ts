@@ -402,6 +402,8 @@ export const InboxViewSchema = z.object({
   drafts: z.array(z.string()).optional(),
   /** Runs waiting on the human with a draft, and the verdict it posts as. */
   postable: z.record(z.string(), VerdictSchema).optional(),
+  /** The signed-in GitHub login, once known: the list marks the PRs it authored and filters by them. */
+  me: z.string().optional(),
 });
 export type InboxView = z.infer<typeof InboxViewSchema>;
 
@@ -419,6 +421,33 @@ export const addCheckout = defineRpc({ name: "inbox.checkout_add", input: z.obje
 export const pollNow = defineRpc({ name: "inbox.poll_now", input: z.object({}), output: InboxViewSchema });
 
 // ---------- View helpers ----------
+
+/** Whether `me` authored the PR; false while the login or the author is unknown. */
+export const isMine = (pr: Pr | undefined, me: string | undefined) => Boolean(me && pr?.author && pr.author.toLowerCase() === me.toLowerCase());
+
+/** The Inbox filter chips: every PR, PRs by other people, or PRs you authored. */
+export type Whose = "all" | "review" | "mine";
+export const SETTLED_STATES: ReadonlySet<RunState> = new Set(["done", "skipped", "stale"]);
+
+/** The runs a filter chip keeps. */
+export function runsFor(whose: Whose, view: Pick<InboxView, "runs" | "items" | "me">): Run[] {
+  if (whose === "all") return [...view.runs];
+  return view.runs.filter((run) => isMine(view.items[run.itemKey]?.pr, view.me) === (whose === "mine"));
+}
+
+/**
+ * The runs the list shows. A search ignores the chip, as it ignores the settled fold: a pasted link
+ * must find its PR whatever chip is on. Before the login is known, the chips don't show, so neither does a filter.
+ */
+export function listedRuns(whose: Whose, view: Pick<InboxView, "runs" | "items" | "me">, query: string): Run[] {
+  return query.trim() || !view.me ? [...view.runs] : runsFor(whose, view);
+}
+
+/** The number on each filter chip: runs that still show without expanding the settled ones. */
+export function whoseCounts(view: Pick<InboxView, "runs" | "items" | "me">): Record<Whose, number> {
+  const open = (whose: Whose) => groupRuns(runsFor(whose, view)).filter((group) => !SETTLED_STATES.has(group.state)).reduce((sum, group) => sum + group.runs.length, 0);
+  return { all: open("all"), review: open("review"), mine: open("mine") };
+}
 
 export const STATE_ORDER: RunState[] = ["needs-decision", "running", "queued", "manual", "no-checkout", "failed", "stale", "done", "skipped"];
 
