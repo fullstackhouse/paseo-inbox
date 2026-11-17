@@ -52,7 +52,7 @@ Until settings hold any sources or rules, a legacy `~/.paseo/inbox.json` applies
 
 - **Sources** are `gh search prs` queries.
 - **Rules**: per source, the first rule whose filters match wins. Filters are `paths` (globs over changed files), `labels` (all required), `draft`, and `when.checks` (`passing`, `failing`, `pending`, `none`).
-- **`rerun`**: `on-push` runs again for each new head SHA, `once` runs once per PR, and `manual` only runs from **Run now**.
+- **`rerun`**: `on-push` runs again for each new head SHA, `once` runs once per PR, and `manual` only runs from **Run now**: its matches wait under **Waiting for Run now**.
 - **Placeholders**: `{{pr.url}}`, `{{pr.number}}`, `{{pr.repo}}`, `{{pr.title}}`, `{{pr.headSha}}`.
 - **Checkouts**: each run gets a fresh worktree of the PR, made from the local checkout listed in `checkouts`. A PR in a repo without one shows as **No local checkout**. If a clone of it sits next to your other checkouts or in `~/src`, `~/code` and similar folders (directly or one owner folder down), the row offers **Use it**, which adds the clone and starts the run.
 - **Workspaces**: runs start hidden from the sidebar. Once you take one over (send its agent a message, press an ask's button, or "Ask about this"), its workspace moves into the sidebar. That needs a Paseo host with `workspaceBackgroundSet` (the FSH build); elsewhere runs stay hidden, and the sidebar's **Show background** lists them.
