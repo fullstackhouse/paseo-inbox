@@ -175,11 +175,14 @@ export function InboxScreen({ theme, layout, navigation }: PluginScreenProps) {
               {checked ? <Text style={{ color: theme.colors.accentForeground, fontSize: 12, fontWeight: "700", lineHeight: 14 }}>✓</Text> : null}
             </Pressable>
           ) : null}
-          <Text style={{ ...muted, fontFamily: MONO, fontSize: 12, flex: 1 }} numberOfLines={1}>
-            {run.itemKey.replace(/^[^/]+\//, "")}
-            {pr?.author ? "  ·  " : ""}
-            {pr?.author ? isMine(pr, view?.me) ? <Text style={{ color: theme.colors.accent, fontWeight: "600" }}>you</Text> : pr.author : null}
-          </Text>
+          <View style={{ flex: 1, flexDirection: "row", alignItems: "center", gap: 8, minWidth: 0 }}>
+            <Text style={{ ...muted, fontFamily: MONO, fontSize: 12, flexShrink: 1 }} numberOfLines={1}>
+              {run.itemKey.replace(/^[^/]+\//, "")}
+              {pr?.author && !isMine(pr, view?.me) ? `  ·  ${pr.author}` : ""}
+            </Text>
+            {/* accent on accentForeground: themes pair them for contrast; accent text alone fades on dark surfaces. */}
+            {isMine(pr, view?.me) ? <Text style={{ color: theme.colors.accentForeground, backgroundColor: theme.colors.accent, borderRadius: 999, paddingHorizontal: 7, paddingVertical: 1, fontSize: 11, fontWeight: "600", overflow: "hidden" }}>you</Text> : null}
+          </View>
           {pr ? (
             <Text style={{ fontFamily: MONO, fontSize: 12 }}>
               <Text style={{ color: theme.colors.statusSuccess }}>+{pr.additions}</Text> <Text style={{ color: theme.colors.statusDanger }}>−{pr.deletions}</Text>
