@@ -4,7 +4,8 @@ import { useQuery } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { ActivityIndicator, ScrollView, Text, View } from "react-native";
 import { previewPr, type PrDetails } from "../shared/review";
-import { previewPrUpstream } from "../shared/upstream";
+import { deployRefetch, previewPrDeployments, previewPrUpstream } from "../shared/upstream";
+import { Deployments } from "./Deployments";
 import { FileDiff, type DiffActions } from "./FileDiff";
 import { GitHubTab } from "./GitHubTab";
 import { Markdown } from "./Markdown";
@@ -53,6 +54,16 @@ export function PrPreview(props: {
     refetchOnWindowFocus: false,
   });
 
+  const loadDeployments = useRpc(previewPrDeployments);
+  const deployments = useQuery({
+    queryKey: ["inbox.pr_deployments_preview", prRef, preview?.details.headSha],
+    queryFn: () => loadDeployments({ ref: prRef }),
+    enabled: Boolean(preview),
+    retry: false,
+    refetchOnWindowFocus: false,
+    refetchInterval: (query) => deployRefetch(query.state.data),
+  });
+
   useEffect(() => {
     let live = true;
     setPreview(null);
@@ -96,6 +107,7 @@ export function PrPreview(props: {
               <Text style={{ color: theme.colors.statusDanger }}>−{details.deletions}</Text> · {details.changedFiles} files · opened {ago(details.createdAt)} ago
             </Text>
           ) : null}
+          <Deployments theme={theme} entries={deployments.data} onOpen={openUrl} />
           <View style={{ flexDirection: "row", gap: 8, flexWrap: "wrap" }}>
             <Chip theme={theme} active label={props.starting ? "Starting…" : "Start review"} disabled={props.starting} onPress={props.onStart} />
             {preview ? <Chip theme={theme} label="GitHub ↗" onPress={() => openUrl(preview.url)} /> : null}
@@ -120,7 +132,10 @@ export function PrPreview(props: {
               data={upstream.data}
               error={upstream.error}
               loading={upstream.isFetching}
-              onRefresh={() => void upstream.refetch()}
+              onRefresh={() => {
+                void upstream.refetch();
+                void deployments.refetch();
+              }}
               pr={{ ...preview, title: preview.details.title || prLabel }}
               theme={theme}
             />

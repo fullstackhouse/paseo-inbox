@@ -1,7 +1,8 @@
 import type { PluginScreenProps } from "@getpaseo/plugin/client";
 import { useRpc } from "@getpaseo/plugin/client";
 import { useQuery } from "@tanstack/react-query";
-import { getPrUpstream } from "../shared/upstream";
+import { deployRefetch, getPrDeployments, getPrUpstream } from "../shared/upstream";
+import { Deployments } from "./Deployments";
 import { GitHubTab } from "./GitHubTab";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Platform, Pressable, ScrollView, Text, View } from "react-native";
@@ -91,6 +92,7 @@ export function ReviewScreen({ theme, layout, navigation, params, setTitle }: Pl
   const restoreDraft = useRpc(restoreRun);
   const fetchDetails = useRpc(getPrDetails);
   const fetchUpstream = useRpc(getPrUpstream);
+  const fetchDeployments = useRpc(getPrDeployments);
   const changeComment = useRpc(updateReviewComment);
   const addComment = useRpc(addReviewComment);
   const deleteComment = useRpc(deleteReviewComment);
@@ -245,6 +247,15 @@ export function ReviewScreen({ theme, layout, navigation, params, setTitle }: Pl
   }, [draft]);
 
   const headSha = details?.headSha ?? pr?.headSha;
+  // Preview deployments: re-read on a new head, and every 30s while one is still deploying.
+  const deployments = useQuery({
+    queryKey: ["inbox.pr_deployments", run?.itemKey, headSha],
+    queryFn: () => fetchDeployments({ itemKey: run!.itemKey }),
+    enabled: Boolean(run),
+    retry: false,
+    refetchOnWindowFocus: false,
+    refetchInterval: (query) => deployRefetch(query.state.data),
+  });
   const stale = Boolean(draft && headSha && headSha !== draft.version);
   // A draft the PR moved past stays postable: it posts on its own commit, where its comments were written.
   const editable = Boolean(draft && !draft.postedUrl && (run?.state === "needs-decision" || run?.state === "stale"));
@@ -602,6 +613,7 @@ export function ReviewScreen({ theme, layout, navigation, params, setTitle }: Pl
             </Text>
             {pr.isDraft ? "  ·  draft PR" : ""}
           </Text>
+          <Deployments theme={theme} entries={deployments.data} onOpen={openUrl} />
           <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
             {draft && verdict ? (
               <Pill theme={theme} color={verdictColor(theme, verdict)}>
@@ -810,7 +822,10 @@ export function ReviewScreen({ theme, layout, navigation, params, setTitle }: Pl
           ) : null}
 
           {tab === "github" ? (
-            <GitHubTab key={run.itemKey} data={upstream.data} error={upstream.error} loading={upstream.isFetching} onRefresh={() => void upstream.refetch()} pr={pr} theme={theme} />
+            <GitHubTab key={run.itemKey} data={upstream.data} error={upstream.error} loading={upstream.isFetching} onRefresh={() => {
+              void upstream.refetch();
+              void deployments.refetch();
+            }} pr={pr} theme={theme} />
           ) : null}
 
           {tab === "preview" && draft ? (

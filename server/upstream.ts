@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { PrUpstream } from "../shared/upstream";
+import { deployEntries, type DeployEntry, type PrUpstream } from "../shared/upstream";
 import { gh, type Gh } from "./github";
 
 const Actor = z.object({ login: z.string() }).nullable();
@@ -297,4 +297,46 @@ export async function fetchPrUpstream(
         at: comment.created_at,
       })),
   };
+}
+
+const DEPLOYMENTS_QUERY = `query InboxDeployments($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) { pullRequest(number: $number) {
+    commits(last: 1) { nodes { commit { deployments(last: 20) { nodes {
+      environment createdAt latestStatus { state logUrl } statuses(first: 10) { nodes { environmentUrl } }
+    } } } } }
+  } }
+}`;
+const DeploymentNode = z.object({
+  environment: z.string().nullable(),
+  createdAt: z.string(),
+  latestStatus: z.object({ state: z.string(), logUrl: z.string().nullable() }).nullable(),
+  statuses: z.object({ nodes: z.array(z.object({ environmentUrl: z.string().nullable() })) }),
+});
+
+/** Preview deployments on the PR's head commit, as header entries; one GraphQL call. */
+export async function fetchPrDeployments(repo: string, number: number, run: Gh = gh): Promise<DeployEntry[]> {
+  const [owner, name] = repo.split("/");
+  const value = z
+    .object({
+      data: z.object({
+        repository: z.object({
+          pullRequest: z.object({
+            commits: z.object({
+              nodes: z.array(z.object({ commit: z.object({ deployments: z.object({ nodes: z.array(DeploymentNode) }) }) })),
+            }),
+          }),
+        }),
+      }),
+    })
+    .parse(await graphql(run, DEPLOYMENTS_QUERY, { owner, name, number }));
+  const nodes = value.data.repository.pullRequest.commits.nodes[0]?.commit.deployments.nodes ?? [];
+  return deployEntries(
+    nodes.map((node) => ({
+      environment: node.environment ?? "deployment",
+      createdAt: node.createdAt,
+      state: node.latestStatus?.state ?? null,
+      logUrl: node.latestStatus?.logUrl ?? null,
+      url: node.statuses.nodes.find((status) => status.environmentUrl)?.environmentUrl ?? null,
+    })),
+  );
 }
