@@ -1,7 +1,7 @@
 import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import { z } from "zod";
-import { parsePrRef, prKey, type Checks, type Pr } from "../shared/inbox";
+import { parsePrRef, prKey, type Checks, type Pr, type PrOutcome } from "../shared/inbox";
 
 export { parsePrRef };
 
@@ -304,6 +304,21 @@ export async function latestReviewBy(repo: string, number: number, me: string, r
     .filter((review) => review.user?.login.toLowerCase() === me.toLowerCase() && review.state !== "PENDING" && review.commit_id && review.submitted_at)
     .sort((a, b) => Date.parse(b.submitted_at!) - Date.parse(a.submitted_at!))[0];
   return mine ? { commit: mine.commit_id!, at: mine.submitted_at!, url: mine.html_url } : null;
+}
+
+const OutcomeSchema = z.object({
+  state: z.enum(["OPEN", "MERGED", "CLOSED"]),
+  latestReviews: z.array(z.object({ author: z.object({ login: z.string() }).nullish(), state: z.string() })).nullish(),
+});
+
+/** Where a PR stands (open, merged, closed) and whether `me` reviewed it: why it left a source. */
+export async function prOutcome(repo: string, number: number, me: string, run: Gh = gh): Promise<PrOutcome> {
+  const out = OutcomeSchema.parse(JSON.parse(await run(["pr", "view", String(number), "--repo", repo, "--json", "state,latestReviews"])));
+  const login = me.toLowerCase();
+  return {
+    state: out.state === "MERGED" ? "merged" : out.state === "CLOSED" ? "closed" : "open",
+    reviewedByMe: Boolean(login) && (out.latestReviews ?? []).some((review) => review.author?.login.toLowerCase() === login && review.state !== "PENDING"),
+  };
 }
 
 const REQUESTS_QUERY = `query($owner: String!, $name: String!, $number: Int!) {

@@ -35,6 +35,35 @@ describe("Inbox", () => {
     expect(offline.inbox.view()).not.toHaveProperty("me");
   });
 
+  it("says why a PR left its source: merged, closed or reviewed on GitHub, keeping the run's time", async () => {
+    const results: Record<string, Pr[]> = { review: [pr({ number: 1 }), pr({ number: 2 }), pr({ number: 3 })] };
+    const states: Record<number, { state: "open" | "merged" | "closed"; reviewedByMe: boolean }> = { 1: { state: "merged", reviewedByMe: true }, 2: { state: "closed", reviewedByMe: false }, 3: { state: "open", reviewedByMe: true } };
+    const outcome = vi.fn(async (item: Pr) => states[item.number]!);
+    const { inbox, saved } = harness(results, { loadConfig: () => config({ maxConcurrent: 3 }), outcome });
+    await inbox.poll();
+    for (const id of ["agent-1", "agent-2", "agent-3"]) inbox.turnEnded(id, { kind: "completed" });
+    results.review = [];
+    await inbox.poll();
+    const runs = saved().runs;
+    expect(runs.map((run) => run.reason)).toEqual(["merged on GitHub", "closed on GitHub", "reviewed on GitHub"]);
+    expect(new Set(runs.map((run) => run.updatedAt)).size).toBe(1);
+    await inbox.poll();
+    expect(outcome).toHaveBeenCalledTimes(3);
+  });
+
+  it("leaves the reason alone when the outcome read fails, and doesn't retry it every poll", async () => {
+    const results: Record<string, Pr[]> = { review: [pr()] };
+    const outcome = vi.fn(async () => Promise.reject(new Error("rate limited")));
+    const { inbox, saved } = harness(results, { outcome });
+    await inbox.poll();
+    inbox.turnEnded("agent-1", { kind: "completed" });
+    results.review = [];
+    await inbox.poll();
+    await inbox.poll();
+    expect(saved().runs[0]).toMatchObject({ state: "done", reason: "no longer in review: reviewed on GitHub, merged or closed" });
+    expect(outcome).toHaveBeenCalledTimes(1);
+  });
+
   it("starts a matching PR in its checkout with the rendered prompt and provider", async () => {
     const { inbox, started, saved } = harness({ review: [pr()] });
     await inbox.poll();

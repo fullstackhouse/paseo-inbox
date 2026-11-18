@@ -6,7 +6,7 @@ import { installBridge } from "./server/bridge";
 import { openInBrowser } from "./server/open";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { compareCommits, ghWithInput, GithubMembership, GithubSource, latestReviewBy, postPullReview, PrDetailsCache, reviewRequests, whoami } from "./server/github";
+import { compareCommits, ghWithInput, GithubMembership, GithubSource, latestReviewBy, postPullReview, prOutcome, PrDetailsCache, reviewRequests, whoami } from "./server/github";
 import { filesAt, reanchorRun, sinceRun } from "./server/rereview";
 import { reanchorReview, reviewSince } from "./shared/rereview";
 import { Inbox, type StartRequest } from "./server/inbox";
@@ -171,6 +171,7 @@ export default function contribute(server: PluginServerContext) {
     ready: () => paseo !== null,
     requests: (pr) => reviewRequests(pr.repo, pr.number),
     me,
+    outcome: async (pr) => prOutcome(pr.repo, pr.number, await me().catch(() => "")),
     draftOf: (runId) => {
       const draft = reviews.get(runId);
       return draft ? { posted: Boolean(draft.postedUrl), verdict: effectiveVerdict(draft) } : null;

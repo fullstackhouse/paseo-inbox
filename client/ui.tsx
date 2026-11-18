@@ -26,9 +26,11 @@ export const verdictColor = (theme: PluginTheme, verdict: string) =>
 export const severityColor = (theme: PluginTheme, severity: NonNullable<Severity>) =>
   severity === "blocker" ? theme.colors.statusDanger : severity === "minor" ? theme.colors.statusWarning : theme.colors.foregroundMuted;
 
-export function Pill({ theme, color, children }: { theme: PluginTheme; color: string; children: ReactNode }) {
+/** `outlined` drops the tinted fill: a muted color on its own tint falls under 4.5:1 on light themes. */
+export function Pill({ theme, color, outlined, children }: { theme: PluginTheme; color: string; outlined?: boolean; children: ReactNode }) {
+  const fill = outlined ? { borderWidth: 1, borderColor: tint(color, 0.45), paddingVertical: 1, paddingHorizontal: 7 } : { backgroundColor: tint(color, 0.14) };
   return (
-    <Text style={{ color, backgroundColor: tint(color, 0.14), borderRadius: 999, paddingHorizontal: 8, paddingVertical: 2, fontSize: 12, fontWeight: "600", overflow: "hidden" }}>
+    <Text style={{ color, borderRadius: 999, paddingHorizontal: 8, paddingVertical: 2, fontSize: 12, fontWeight: "600", overflow: "hidden", ...fill }}>
       {children}
     </Text>
   );

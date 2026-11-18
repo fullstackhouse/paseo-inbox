@@ -117,6 +117,48 @@ const LEAVES: ReadonlySet<RunState> = new Set(["queued", "needs-decision", "no-c
 /** Reason on a run the human dismissed: later pushes don't queue that rule for that PR again. */
 export const DISMISSED = "dismissed";
 
+/** Reason on a run whose PR left `source` before the plugin looked up why; `explainLeft` replaces it. */
+export const leftReason = (source: string) => `no longer in ${source}: reviewed on GitHub, merged or closed`;
+const LEFT = /^no longer in (.+): reviewed on GitHub, merged or closed$/;
+/** A done run whose PR left its source and nobody has looked up why yet. */
+export const unexplained = (run: Run) => run.state === "done" && LEFT.test(run.reason ?? "");
+
+/** Where a PR that left a source stands on GitHub. */
+export interface PrOutcome {
+  state: "open" | "merged" | "closed";
+  /** The signed-in human has a review on it. */
+  reviewedByMe: boolean;
+}
+
+/** The reason a done run gets once `outcome` says why its PR left `source`. */
+export function explainedReason(source: string, outcome: PrOutcome): string {
+  if (outcome.state === "merged") return "merged on GitHub";
+  if (outcome.state === "closed") return "closed on GitHub";
+  if (outcome.reviewedByMe) return "reviewed on GitHub";
+  return `no longer in ${source}: review request or label removed`;
+}
+
+export type DoneTone = "success" | "danger" | "muted";
+
+/**
+ * The status pill of a done run (how it ended) and what of its reason the pill doesn't already say
+ * (null: nothing). Unknown reasons read "Done" with the reason as detail.
+ */
+export function doneStatus(run: Run): { label: string; tone: DoneTone; detail: string | null } | null {
+  if (run.state !== "done") return null;
+  const reason = run.reason ?? "";
+  const after = (prefix: string) => reason.slice(prefix.length).replace(/^:\s*/, "").trim() || null;
+  if (reason.startsWith("review posted")) return { label: "Posted", tone: "success", detail: after("review posted") };
+  if (reason === DISMISSED) return { label: "Dismissed", tone: "muted", detail: null };
+  if (reason.startsWith("handed off")) return { label: "Handed off", tone: "muted", detail: reason };
+  if (reason.startsWith("comments moved")) return { label: "Moved", tone: "muted", detail: reason };
+  if (reason === "merged on GitHub") return { label: "Merged", tone: "success", detail: null };
+  if (reason === "closed on GitHub") return { label: "Closed", tone: "danger", detail: null };
+  if (reason === "reviewed on GitHub") return { label: "Reviewed on GitHub", tone: "success", detail: null };
+  if (reason.startsWith("no longer in ")) return { label: "Left source", tone: "muted", detail: reason };
+  return { label: "Done", tone: "muted", detail: reason || null };
+}
+
 /** Why a run waits: the repo has no entry under Settings → Inbox → Repos on this machine. */
 export const noCheckoutReason = (repo: string) => `no clone of ${repo} on this machine`;
 
@@ -232,7 +274,7 @@ export function plan({ config, results, state, now }: PlanInput): State {
     const present = new Set(prs.map((pr) => pr.key));
     runs = runs.map((run) =>
       run.source === source && !present.has(run.itemKey) && LEAVES.has(run.state)
-        ? { ...run, state: "done", reason: `no longer in ${source}: reviewed on GitHub, merged or closed`, updatedAt: now }
+        ? { ...run, state: "done", reason: leftReason(source), updatedAt: now }
         : run,
     );
   }

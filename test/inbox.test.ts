@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ConfigSchema, DISMISSED, draftsReviews, globToRegExp, groupRuns, isMine, listedRuns, runsFor, whoseCounts, matchesQuery, mismatch, needsDecisionCount, opensReview, plan, renderPrompt, requeue, reviewPill, reviewRunFor, runId, runningDetail, setRun, startable, type Run } from "../shared/inbox";
+import { ConfigSchema, DISMISSED, doneStatus, draftsReviews, explainedReason, globToRegExp, groupRuns, isMine, listedRuns, runsFor, whoseCounts, matchesQuery, mismatch, needsDecisionCount, opensReview, plan, renderPrompt, requeue, reviewPill, reviewRunFor, runId, runningDetail, setRun, startable, type Run } from "../shared/inbox";
 import { config, emptyState, later, NOW, pr } from "./fixtures";
 
 const states = (state: ReturnType<typeof plan>) => state.runs.map((run) => [run.rule, run.version, run.state]);
@@ -365,5 +365,24 @@ describe("reviewRunFor", () => {
     expect(reviewRunFor(runs, view, "acme/shop#7")).toBeNull();
     expect(reviewRunFor(runs, view, "acme/shop#9")).toBeNull();
     expect(reviewRunFor(runs, view, "not a pr")).toBeNull();
+  });
+});
+
+describe("doneStatus", () => {
+  const done = (reason?: string): Run => ({ id: "r", itemKey: "acme/shop#7", source: "review", rule: "review", version: "abc", state: "done", updatedAt: NOW, ...(reason ? { reason } : {}) });
+  it("names how a done run ended, with only what the pill doesn't say as detail", () => {
+    expect(doneStatus(done("review posted: https://github.com/acme/shop/pull/7#r1"))).toEqual({ label: "Posted", tone: "success", detail: "https://github.com/acme/shop/pull/7#r1" });
+    expect(doneStatus(done(DISMISSED))).toEqual({ label: "Dismissed", tone: "muted", detail: null });
+    expect(doneStatus(done("handed off to @ana: https://x"))?.label).toBe("Handed off");
+    expect(doneStatus(done("comments moved to abc1234"))?.label).toBe("Moved");
+    expect(doneStatus(done(explainedReason("review", { state: "merged", reviewedByMe: true })))).toEqual({ label: "Merged", tone: "success", detail: null });
+    expect(doneStatus(done(explainedReason("review", { state: "closed", reviewedByMe: false })))).toEqual({ label: "Closed", tone: "danger", detail: null });
+    expect(doneStatus(done(explainedReason("review", { state: "open", reviewedByMe: true })))?.label).toBe("Reviewed on GitHub");
+    expect(doneStatus(done(explainedReason("review", { state: "open", reviewedByMe: false })))).toEqual({ label: "Left source", tone: "muted", detail: "no longer in review: review request or label removed" });
+    expect(doneStatus(done("no longer in review: reviewed on GitHub, merged or closed"))?.label).toBe("Left source");
+    expect(doneStatus(done())).toEqual({ label: "Done", tone: "muted", detail: null });
+  });
+  it("is null for runs that aren't done", () => {
+    expect(doneStatus({ ...done(DISMISSED), state: "stale" })).toBeNull();
   });
 });

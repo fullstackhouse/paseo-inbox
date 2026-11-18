@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { GithubSource, PrDetailsCache, queryArgs, summarizeChecks } from "../server/github";
+import { GithubSource, PrDetailsCache, prOutcome, queryArgs, summarizeChecks } from "../server/github";
 import { prState } from "../shared/review";
 
 import { fetchPrUpstream } from "../server/upstream";
@@ -412,5 +412,15 @@ describe("PrDetailsCache", () => {
     expect(prState(details)).toEqual({ state: "merged", at: "2026-11-16T17:13:41Z" });
     expect(prState({ ...details, mergedAt: null })).toEqual({ state: "closed", at: "2026-11-16T17:13:42Z" });
     expect(prState({ ...details, mergedAt: null, closedAt: null })).toEqual({ state: "open", at: "2026-11-04T10:00:00Z" });
+  });
+});
+
+describe("prOutcome", () => {
+  const view = (body: object) => async () => JSON.stringify(body);
+  it("maps the PR's state and finds a submitted review by the signed-in login", async () => {
+    expect(await prOutcome("acme/shop", 7, "Dawid", view({ state: "MERGED", latestReviews: [{ author: { login: "dawid" }, state: "APPROVED" }] }))).toEqual({ state: "merged", reviewedByMe: true });
+    expect(await prOutcome("acme/shop", 7, "dawid", view({ state: "CLOSED", latestReviews: [] }))).toEqual({ state: "closed", reviewedByMe: false });
+    expect(await prOutcome("acme/shop", 7, "dawid", view({ state: "OPEN", latestReviews: [{ author: { login: "ana" }, state: "COMMENTED" }, { author: { login: "dawid" }, state: "PENDING" }] }))).toEqual({ state: "open", reviewedByMe: false });
+    expect(await prOutcome("acme/shop", 7, "", view({ state: "OPEN", latestReviews: [{ author: null, state: "COMMENTED" }] }))).toEqual({ state: "open", reviewedByMe: false });
   });
 });
