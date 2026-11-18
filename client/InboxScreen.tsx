@@ -2,7 +2,7 @@ import type { PluginScreenProps } from "@getpaseo/plugin/client";
 import { useRpc, useSettings } from "@getpaseo/plugin/client";
 import { useEffect, useMemo, useState } from "react";
 import { ActivityIndicator, Pressable, ScrollView, Text, TextInput, View } from "react-native";
-import { addCheckout, addPr, findCheckout, groupRuns, isMine, isUnconfigured, listedRuns, matchesQuery, SETTLED_STATES, whoseCounts, type Whose, opensReview, parsePrRef, runNow, skipRun, type Run, type RunState } from "../shared/inbox";
+import { addCheckout, addPr, findCheckout, groupRuns, isMine, isUnconfigured, listedRuns, matchesQuery, SETTLED_STATES, whoseCounts, type Whose, opensReview, parsePrRef, runNow, runningDetail, skipRun, type Run, type RunState } from "../shared/inbox";
 import { postReview } from "../shared/review";
 import { inboxSettings } from "../shared/settings";
 import { openScreen } from "./nav";
@@ -156,8 +156,8 @@ export function InboxScreen({ theme, layout, navigation }: PluginScreenProps) {
     };
     const tappable = Boolean(draft || opensReview(run, view) || (run.agentId && navigation) || pr);
     const clone = run.state === "no-checkout" && pr ? clones[pr.repo] : undefined;
-    const drafting = run.state === "running";
-    const detail = draft ? draft.detail : drafting ? `Drafting the review${run.reason ? ` · ${run.reason}` : "…"}` : clone ? `Found a clone at ${clone}` : run.state === "no-checkout" && pr ? `No clone of ${pr.repo} on this machine. Add one under Settings → Inbox → Repos on this machine.` : (run.reason ?? run.rule);
+    const running = run.state === "running";
+    const detail = draft ? draft.detail : running ? runningDetail(run, view) : clone ? `Found a clone at ${clone}` : run.state === "no-checkout" && pr ? `No clone of ${pr.repo} on this machine. Add one under Settings → Inbox → Repos on this machine.` : (run.reason ?? run.rule);
     const checked = picked.has(run.id);
     return (
       <Pressable accessibilityRole={tappable ? "button" : undefined} disabled={!tappable} onPress={open} style={({ pressed }) => ({ backgroundColor: pressed ? theme.colors.surface2 : theme.colors.surface1, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, gap: 4 })}>
@@ -195,7 +195,7 @@ export function InboxScreen({ theme, layout, navigation }: PluginScreenProps) {
         </Text>
         <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
           {draft ? <Pill theme={theme} color={verdictColor(theme, draft.verdict)}>{draft.verdict}</Pill> : null}
-          {drafting ? <ActivityIndicator size="small" color={theme.colors.foregroundMuted} accessibilityLabel="Drafting the review" /> : null}
+          {running ? <ActivityIndicator size="small" color={theme.colors.foregroundMuted} accessibilityLabel="Running" /> : null}
           <Text style={{ ...muted, flex: 1 }} numberOfLines={2}>
             {detail}
           </Text>

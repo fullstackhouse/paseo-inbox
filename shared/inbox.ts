@@ -466,6 +466,10 @@ export const opensReview = (run: Run, view: Pick<InboxView, "reviewRules" | "dra
   Boolean(view?.drafts?.includes(run.id)) ||
   ((run.state === "running" || run.state === "queued") && Boolean(view?.reviewRules?.includes(run.rule)));
 
+/** A running row's detail: what the run is doing (only review rules draft a review), then its reason or, failing that, its rule, so two rules running on one PR stay apart. */
+export const runningDetail = (run: Run, view: Pick<InboxView, "reviewRules"> | null) =>
+  `${view?.reviewRules?.includes(run.rule) ? "Drafting the review" : "Running"} · ${run.reason ?? run.rule}`;
+
 /**
  * The newest run of the PR in `ref` that opens the review screen, else null. Other plugins open the
  * review screen with `{ pr: ref }` (a PR link or `owner/repo#N`), so this lookup is a public contract.

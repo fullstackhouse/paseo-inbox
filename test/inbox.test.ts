@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ConfigSchema, DISMISSED, draftsReviews, globToRegExp, groupRuns, isMine, listedRuns, runsFor, whoseCounts, matchesQuery, mismatch, needsDecisionCount, opensReview, plan, renderPrompt, requeue, reviewPill, reviewRunFor, runId, setRun, startable, type Run } from "../shared/inbox";
+import { ConfigSchema, DISMISSED, draftsReviews, globToRegExp, groupRuns, isMine, listedRuns, runsFor, whoseCounts, matchesQuery, mismatch, needsDecisionCount, opensReview, plan, renderPrompt, requeue, reviewPill, reviewRunFor, runId, runningDetail, setRun, startable, type Run } from "../shared/inbox";
 import { config, emptyState, later, NOW, pr } from "./fixtures";
 
 const states = (state: ReturnType<typeof plan>) => state.runs.map((run) => [run.rule, run.version, run.state]);
@@ -269,6 +269,21 @@ describe("opensReview", () => {
   it("opens a dismissed run whose draft is still saved", () => {
     expect(opensReview(at("done", "draft-review", DISMISSED), view)).toBe(false);
     expect(opensReview(at("done", "draft-review", DISMISSED), { ...view, drafts: ["r"] })).toBe(true);
+  });
+});
+
+describe("runningDetail", () => {
+  const view = { reviewRules: ["draft-review"] };
+  const at = (rule: string, reason?: string): Run => ({ id: "r", itemKey: "o/r#1", source: "review", rule, version: "a", state: "running", reason, updatedAt: NOW });
+
+  it("says a review rule's run is drafting, and any other rule's run is only running", () => {
+    expect(runningDetail(at("draft-review"), view)).toBe("Drafting the review · draft-review");
+    expect(runningDetail(at("qa"), view)).toBe("Running · qa");
+    expect(runningDetail(at("draft-review"), null)).toBe("Running · draft-review");
+  });
+
+  it("puts the run's reason in place of its rule", () => {
+    expect(runningDetail(at("draft-review", "read-only run: author is not a member"), view)).toBe("Drafting the review · read-only run: author is not a member");
   });
 });
 
