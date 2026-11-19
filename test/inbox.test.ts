@@ -373,12 +373,12 @@ describe("doneStatus", () => {
   it("names how a done run ended, with only what the pill doesn't say as detail", () => {
     expect(doneStatus(done("review posted: https://github.com/acme/shop/pull/7#r1"))).toEqual({ label: "Posted", tone: "success", detail: "https://github.com/acme/shop/pull/7#r1" });
     expect(doneStatus(done(DISMISSED))).toEqual({ label: "Dismissed", tone: "muted", detail: null });
-    expect(doneStatus(done("handed off to @ana: https://x"))?.label).toBe("Handed off");
-    expect(doneStatus(done("comments moved to abc1234"))?.label).toBe("Moved");
+    expect(doneStatus(done("handed off to @ana: https://x"))).toEqual({ label: "Handed off", tone: "muted", detail: "@ana: https://x" });
+    expect(doneStatus(done("comments moved to abc1234"))).toEqual({ label: "Moved", tone: "muted", detail: "abc1234" });
     expect(doneStatus(done(explainedReason("review", { state: "merged", reviewedByMe: true })))).toEqual({ label: "Merged", tone: "success", detail: null });
     expect(doneStatus(done(explainedReason("review", { state: "closed", reviewedByMe: false })))).toEqual({ label: "Closed", tone: "danger", detail: null });
     expect(doneStatus(done(explainedReason("review", { state: "open", reviewedByMe: true })))?.label).toBe("Reviewed on GitHub");
-    expect(doneStatus(done(explainedReason("review", { state: "open", reviewedByMe: false })))).toEqual({ label: "Left source", tone: "muted", detail: "no longer in review: review request or label removed" });
+    expect(doneStatus(done(explainedReason("review", { state: "open", reviewedByMe: false })))).toEqual({ label: "Left source", tone: "muted", detail: "review request or label removed" });
     expect(doneStatus(done("no longer in review: reviewed on GitHub, merged or closed"))?.label).toBe("Left source");
     expect(doneStatus(done())).toEqual({ label: "Done", tone: "muted", detail: null });
   });

@@ -171,7 +171,7 @@ export default function contribute(server: PluginServerContext) {
     ready: () => paseo !== null,
     requests: (pr) => reviewRequests(pr.repo, pr.number),
     me,
-    outcome: async (pr) => prOutcome(pr.repo, pr.number, await me().catch(() => "")),
+    outcome: async (pr, since) => prOutcome(pr.repo, pr.number, await me().catch(() => ""), since),
     draftOf: (runId) => {
       const draft = reviews.get(runId);
       return draft ? { posted: Boolean(draft.postedUrl), verdict: effectiveVerdict(draft) } : null;

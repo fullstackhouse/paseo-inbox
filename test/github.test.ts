@@ -418,9 +418,14 @@ describe("PrDetailsCache", () => {
 describe("prOutcome", () => {
   const view = (body: object) => async () => JSON.stringify(body);
   it("maps the PR's state and finds a submitted review by the signed-in login", async () => {
-    expect(await prOutcome("acme/shop", 7, "Dawid", view({ state: "MERGED", latestReviews: [{ author: { login: "dawid" }, state: "APPROVED" }] }))).toEqual({ state: "merged", reviewedByMe: true });
-    expect(await prOutcome("acme/shop", 7, "dawid", view({ state: "CLOSED", latestReviews: [] }))).toEqual({ state: "closed", reviewedByMe: false });
-    expect(await prOutcome("acme/shop", 7, "dawid", view({ state: "OPEN", latestReviews: [{ author: { login: "ana" }, state: "COMMENTED" }, { author: { login: "dawid" }, state: "PENDING" }] }))).toEqual({ state: "open", reviewedByMe: false });
-    expect(await prOutcome("acme/shop", 7, "", view({ state: "OPEN", latestReviews: [{ author: null, state: "COMMENTED" }] }))).toEqual({ state: "open", reviewedByMe: false });
+    expect(await prOutcome("acme/shop", 7, "Dawid", undefined, view({ state: "MERGED", latestReviews: [{ author: { login: "dawid" }, state: "APPROVED" }] }))).toEqual({ state: "merged", reviewedByMe: true });
+    expect(await prOutcome("acme/shop", 7, "dawid", undefined, view({ state: "CLOSED", latestReviews: [] }))).toEqual({ state: "closed", reviewedByMe: false });
+    expect(await prOutcome("acme/shop", 7, "dawid", undefined, view({ state: "OPEN", latestReviews: [{ author: { login: "ana" }, state: "COMMENTED" }, { author: { login: "dawid" }, state: "PENDING" }] }))).toEqual({ state: "open", reviewedByMe: false });
+    expect(await prOutcome("acme/shop", 7, "", undefined, view({ state: "OPEN", latestReviews: [{ author: null, state: "COMMENTED" }] }))).toEqual({ state: "open", reviewedByMe: false });
+  });
+  it("counts only reviews submitted since the run was created: an earlier round's review isn't this run's outcome", async () => {
+    const reviews = view({ state: "OPEN", latestReviews: [{ author: { login: "dawid" }, state: "APPROVED", submittedAt: "2026-11-10T10:00:00Z" }] });
+    expect(await prOutcome("acme/shop", 7, "dawid", "2026-11-12T00:00:00Z", reviews)).toEqual({ state: "open", reviewedByMe: false });
+    expect(await prOutcome("acme/shop", 7, "dawid", "2026-11-09T00:00:00Z", reviews)).toEqual({ state: "open", reviewedByMe: true });
   });
 });

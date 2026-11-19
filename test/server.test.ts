@@ -38,7 +38,7 @@ describe("Inbox", () => {
   it("says why a PR left its source: merged, closed or reviewed on GitHub, keeping the run's time", async () => {
     const results: Record<string, Pr[]> = { review: [pr({ number: 1 }), pr({ number: 2 }), pr({ number: 3 })] };
     const states: Record<number, { state: "open" | "merged" | "closed"; reviewedByMe: boolean }> = { 1: { state: "merged", reviewedByMe: true }, 2: { state: "closed", reviewedByMe: false }, 3: { state: "open", reviewedByMe: true } };
-    const outcome = vi.fn(async (item: Pr) => states[item.number]!);
+    const outcome = vi.fn(async (item: Pr, _since?: string) => states[item.number]!);
     const { inbox, saved } = harness(results, { loadConfig: () => config({ maxConcurrent: 3 }), outcome });
     await inbox.poll();
     for (const id of ["agent-1", "agent-2", "agent-3"]) inbox.turnEnded(id, { kind: "completed" });
@@ -47,6 +47,8 @@ describe("Inbox", () => {
     const runs = saved().runs;
     expect(runs.map((run) => run.reason)).toEqual(["merged on GitHub", "closed on GitHub", "reviewed on GitHub"]);
     expect(new Set(runs.map((run) => run.updatedAt)).size).toBe(1);
+    expect(outcome.mock.calls.map(([, since]) => since)).toEqual(runs.map((run) => run.createdAt));
+    expect(runs.every((run) => run.createdAt)).toBe(true);
     await inbox.poll();
     expect(outcome).toHaveBeenCalledTimes(3);
   });

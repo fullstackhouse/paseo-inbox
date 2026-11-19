@@ -94,6 +94,8 @@ export const RunSchema = z.object({
   /** Whether the PR's author was trusted when the run started: untrusted runs only read. */
   trusted: z.boolean().optional(),
   reason: z.string().optional(),
+  /** When the run was planned; runs saved before this field have none. */
+  createdAt: z.string().optional(),
   updatedAt: z.string(),
   /** A second (third…) run at the same head, after the review was requested again. */
   round: z.number().int().min(2).optional(),
@@ -126,7 +128,7 @@ export const unexplained = (run: Run) => run.state === "done" && LEFT.test(run.r
 /** Where a PR that left a source stands on GitHub. */
 export interface PrOutcome {
   state: "open" | "merged" | "closed";
-  /** The signed-in human has a review on it. */
+  /** The signed-in human submitted a review on it (since the run was created, when known). */
   reviewedByMe: boolean;
 }
 
@@ -150,12 +152,12 @@ export function doneStatus(run: Run): { label: string; tone: DoneTone; detail: s
   const after = (prefix: string) => reason.slice(prefix.length).replace(/^:\s*/, "").trim() || null;
   if (reason.startsWith("review posted")) return { label: "Posted", tone: "success", detail: after("review posted") };
   if (reason === DISMISSED) return { label: "Dismissed", tone: "muted", detail: null };
-  if (reason.startsWith("handed off")) return { label: "Handed off", tone: "muted", detail: reason };
-  if (reason.startsWith("comments moved")) return { label: "Moved", tone: "muted", detail: reason };
+  if (reason.startsWith("handed off")) return { label: "Handed off", tone: "muted", detail: after("handed off to") };
+  if (reason.startsWith("comments moved")) return { label: "Moved", tone: "muted", detail: after("comments moved to") };
   if (reason === "merged on GitHub") return { label: "Merged", tone: "success", detail: null };
   if (reason === "closed on GitHub") return { label: "Closed", tone: "danger", detail: null };
   if (reason === "reviewed on GitHub") return { label: "Reviewed on GitHub", tone: "success", detail: null };
-  if (reason.startsWith("no longer in ")) return { label: "Left source", tone: "muted", detail: reason };
+  if (reason.startsWith("no longer in ")) return { label: "Left source", tone: "muted", detail: reason.slice(reason.indexOf(": ") + 2) || null };
   return { label: "Done", tone: "muted", detail: reason || null };
 }
 
@@ -250,7 +252,7 @@ export function plan({ config, results, state, now }: PlanInput): State {
           : run,
       );
 
-      const base = { id, itemKey: pr.key, source, rule: ruleName, version: pr.headSha, updatedAt: now };
+      const base = { id, itemKey: pr.key, source, rule: ruleName, version: pr.headSha, createdAt: now, updatedAt: now };
       let next: Run | null;
       if (!rule) next = { ...base, state: "skipped", reason: reasons.join("; ") };
       else if (dismissed(earlier)) next = null;
@@ -330,7 +332,7 @@ export function requeue(state: State, config: Config, itemKey: string, rule: str
   const current = state.runs.find((run) => run.id === id);
   if (current?.state === "running") throw new Error("Already running");
   const source = options.source ?? current?.source ?? config.rules.find((candidate) => candidate.name === rule)!.source;
-  const queued: Run = { id, itemKey, source, rule, version: item.pr.headSha, state: "queued", updatedAt: now, ...(round > 1 ? { round } : {}), ...(options.reason ? { reason: options.reason } : {}) };
+  const queued: Run = { id, itemKey, source, rule, version: item.pr.headSha, state: "queued", createdAt: now, updatedAt: now, ...(round > 1 ? { round } : {}), ...(options.reason ? { reason: options.reason } : {}) };
   return { ...state, runs: [...state.runs.filter((run) => run.id !== id), queued] };
 }
 

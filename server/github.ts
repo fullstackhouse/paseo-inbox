@@ -308,16 +308,20 @@ export async function latestReviewBy(repo: string, number: number, me: string, r
 
 const OutcomeSchema = z.object({
   state: z.enum(["OPEN", "MERGED", "CLOSED"]),
-  latestReviews: z.array(z.object({ author: z.object({ login: z.string() }).nullish(), state: z.string() })).nullish(),
+  latestReviews: z.array(z.object({ author: z.object({ login: z.string() }).nullish(), state: z.string(), submittedAt: z.string().nullish() })).nullish(),
 });
 
-/** Where a PR stands (open, merged, closed) and whether `me` reviewed it: why it left a source. */
-export async function prOutcome(repo: string, number: number, me: string, run: Gh = gh): Promise<PrOutcome> {
+/**
+ * Where a PR stands (open, merged, closed) and whether `me` reviewed it at or after `since`: why it left
+ * a source. `latestReviews` keeps each reviewer's last review however old, so a review from an earlier
+ * round would otherwise read as this run's outcome.
+ */
+export async function prOutcome(repo: string, number: number, me: string, since?: string, run: Gh = gh): Promise<PrOutcome> {
   const out = OutcomeSchema.parse(JSON.parse(await run(["pr", "view", String(number), "--repo", repo, "--json", "state,latestReviews"])));
   const login = me.toLowerCase();
   return {
     state: out.state === "MERGED" ? "merged" : out.state === "CLOSED" ? "closed" : "open",
-    reviewedByMe: Boolean(login) && (out.latestReviews ?? []).some((review) => review.author?.login.toLowerCase() === login && review.state !== "PENDING"),
+    reviewedByMe: Boolean(login) && (out.latestReviews ?? []).some((review) => review.author?.login.toLowerCase() === login && review.state !== "PENDING" && (!since || Boolean(review.submittedAt && Date.parse(review.submittedAt) >= Date.parse(since)))),
   };
 }
 

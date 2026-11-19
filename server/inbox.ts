@@ -41,7 +41,7 @@ export interface InboxDeps {
   /** The signed-in GitHub login. */
   me?: () => Promise<string>;
   /** Where a PR stands on GitHub, so a run whose PR left its source says merged, closed or reviewed. */
-  outcome?: (pr: Pr) => Promise<PrOutcome>;
+  outcome?: (pr: Pr, since?: string) => Promise<PrOutcome>;
   /** A run's review draft: whether it was posted, and the verdict it posts as. */
   draftOf?: (runId: string) => { posted: boolean; verdict: Verdict } | null;
   /** Whether a run has a review draft on disk; cheaper than `draftOf`, asked on every list. */
@@ -198,7 +198,7 @@ export class Inbox {
       const pr = this.state.items[run.itemKey]?.pr;
       if (!pr) continue;
       try {
-        const outcome = await this.deps.outcome(pr);
+        const outcome = await this.deps.outcome(pr, run.createdAt);
         const current = this.run(run.id);
         if (!current || !unexplained(current)) continue;
         const reason = explainedReason(current.source, outcome);
