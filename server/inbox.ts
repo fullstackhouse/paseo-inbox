@@ -300,9 +300,10 @@ export class Inbox {
     if (!latest) throw new Error(`No run for ${itemKey} / ${rule}`);
     if (latest.state === "running") throw new Error("It's running; stop the agent first");
     this.commit(setRun(this.state, latest.id, { state: "done", reason: DISMISSED }, this.now()));
-    // Every run of this item and rule had its own worktree; none is needed any more.
+    // Every run of this item and rule had its own worktree; none is needed any more. Archived in the
+    // background: removing worktrees is slow and the Dismiss button shouldn't wait on it.
     const workspaces = new Set(this.state.runs.filter((run) => run.itemKey === itemKey && run.rule === rule && run.workspaceId && run.state !== "running").map((run) => run.workspaceId!));
-    for (const workspaceId of workspaces) await this.deps.archive?.(workspaceId).catch((error) => console.error("archive failed", workspaceId, error));
+    for (const workspaceId of workspaces) void this.deps.archive?.(workspaceId).catch((error) => console.error("archive failed", workspaceId, error));
   }
 
   /** The run an inbox agent belongs to: its latest one. */

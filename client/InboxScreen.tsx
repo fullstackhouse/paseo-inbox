@@ -152,6 +152,7 @@ export function InboxScreen({ theme, layout, navigation }: PluginScreenProps) {
     const pr = view?.items[run.itemKey]?.pr;
     const draft = drafted(run);
     const key = `${run.itemKey}|${run.rule}`;
+    const rowBusy = busy === key || Boolean(busy?.startsWith(`${key}:`));
     const open = () => {
       if (draft || opensReview(run, view)) openScreen({ screenId: REVIEW_SCREEN, params: { runId: run.id } });
       else if (run.agentId && navigation) navigation.openAgent({ agentId: run.agentId });
@@ -204,12 +205,12 @@ export function InboxScreen({ theme, layout, navigation }: PluginScreenProps) {
           <Text style={{ ...muted, flex: 1 }} numberOfLines={2}>
             {detail}
           </Text>
-          {clone && pr ? <Chip theme={theme} label="Use it" active disabled={busy === key} style={{ paddingVertical: 4, paddingHorizontal: 10 }} textStyle={{ fontSize: 12 }} onPress={() => void adoptClone(key, pr.repo, clone)} /> : null}
+          {clone && pr ? <Chip theme={theme} label="Use it" active disabled={rowBusy} style={{ paddingVertical: 4, paddingHorizontal: 10 }} textStyle={{ fontSize: 12 }} onPress={() => void adoptClone(key, pr.repo, clone)} /> : null}
           {run.state !== "running" && run.state !== "queued" && run.state !== "no-checkout" ? (
-            <Chip theme={theme} label={run.agentId ? "Rerun" : "Run now"} disabled={busy === key} style={{ paddingVertical: 4, paddingHorizontal: 10 }} textStyle={{ fontSize: 12 }} onPress={() => void act(key, () => rerun({ itemKey: run.itemKey, rule: run.rule }))} />
+            <Chip theme={theme} label={busy === `${key}:run` ? "Starting…" : run.agentId ? "Rerun" : "Run now"} disabled={rowBusy} style={{ paddingVertical: 4, paddingHorizontal: 10 }} textStyle={{ fontSize: 12 }} onPress={() => void act(`${key}:run`, () => rerun({ itemKey: run.itemKey, rule: run.rule }))} />
           ) : null}
           {run.state !== "running" && run.state !== "done" ? (
-            <Chip theme={theme} label="Dismiss" disabled={busy === key} style={{ paddingVertical: 4, paddingHorizontal: 10 }} textStyle={{ fontSize: 12 }} onPress={() => void act(key, () => dismiss({ itemKey: run.itemKey, rule: run.rule }))} />
+            <Chip theme={theme} label={busy === `${key}:dismiss` ? "Dismissing…" : "Dismiss"} disabled={rowBusy} style={{ paddingVertical: 4, paddingHorizontal: 10 }} textStyle={{ fontSize: 12 }} onPress={() => void act(`${key}:dismiss`, () => dismiss({ itemKey: run.itemKey, rule: run.rule }))} />
           ) : null}
         </View>
       </Pressable>

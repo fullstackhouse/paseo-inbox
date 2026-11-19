@@ -233,4 +233,12 @@ describe("Inbox", () => {
     await inbox.skip("acme/shop#7", "draft-review");
     expect(archived).toEqual(["ws"]);
   });
+
+  it("Dismiss returns without waiting for the worktrees to archive", async () => {
+    const { inbox, saved } = harness({ review: [pr()] }, { archive: () => new Promise(() => {}) });
+    await inbox.poll();
+    inbox.turnEnded("agent-1", { kind: "completed" });
+    await inbox.skip("acme/shop#7", "draft-review");
+    expect(saved().runs[0]!.state).toBe("done");
+  });
 });
