@@ -42,7 +42,7 @@ import { FileIndex } from "./FileIndex";
 import { Markdown } from "./Markdown";
 import { PrPreview } from "./PrPreview";
 import { useOpenUrl } from "./openUrl";
-import { ago, Chip, MONO, Pill, PrStatePill, STICKY, verdictColor } from "./ui";
+import { agoText, Chip, MONO, Pill, PrStatePill, STICKY, verdictColor } from "./ui";
 import { useInbox } from "./useInbox";
 import { useScreenKeys } from "./useScreenKeys";
 
@@ -65,8 +65,7 @@ const rpcChange = (change: CommentChange) => ("severity" in change ? { severity:
  */
 /** "drafted 3h ago", "drafted just now". */
 function ageLabel(what: string, iso: string): string {
-  const age = ago(iso);
-  return age === "now" ? `${what} just now` : `${what} ${age} ago`;
+  return `${what} ${agoText(iso)}`;
 }
 
 export function ReviewScreen({ theme, layout, navigation, params, setTitle }: PluginScreenProps) {
@@ -664,7 +663,7 @@ export function ReviewScreen({ theme, layout, navigation, params, setTitle }: Pl
           ) : null}
           {dismissed ? (
             <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-              <Text style={{ ...muted, flex: 1, minWidth: 220 }}>You dismissed this review ({ago(run.updatedAt)} ago). Restore it to edit and post it.</Text>
+              <Text style={{ ...muted, flex: 1, minWidth: 220 }}>You dismissed this review ({agoText(run.updatedAt)}). Restore it to edit and post it.</Text>
               <Chip theme={theme} active label={busy === "restore" ? "Restoring…" : "Restore"} disabled={Boolean(busy)} onPress={() => void restore()} />
             </View>
           ) : null}
@@ -691,7 +690,7 @@ export function ReviewScreen({ theme, layout, navigation, params, setTitle }: Pl
                   <Text style={{ color: theme.colors.foreground, fontSize: 14, fontWeight: "600" }}>{run.state === "queued" ? "Waiting for a free slot" : "The reviewer is drafting this review"}</Text>
                 </View>
                 <Text style={muted}>
-                  The summary, verdict and comments appear here when the draft is saved{run.state === "running" ? ` (started ${ago(run.updatedAt)} ago)` : ""}. Read the Files and Description in the meantime.
+                  The summary, verdict and comments appear here when the draft is saved{run.state === "running" ? ` (started ${agoText(run.updatedAt)})` : ""}. Read the Files and Description in the meantime.
                 </Text>
                 <View style={{ flexDirection: "row", gap: 8 }}>
                   <Chip theme={theme} label="Files" style={small} textStyle={{ fontSize: 12 }} onPress={() => setTab("files")} />
@@ -833,7 +832,7 @@ export function ReviewScreen({ theme, layout, navigation, params, setTitle }: Pl
             details ? (
               <>
                 <Text style={muted}>
-                  by {details.author} · opened {ago(details.createdAt)} ago
+                  by {details.author} · opened {agoText(details.createdAt)}
                 </Text>
                 <Markdown text={details.body} theme={theme} />
               </>
@@ -998,7 +997,7 @@ function SinceView({
   actions: DiffActions;
   onFiles: () => void;
 }) {
-  const what = `${SINCE_FROM[since.from]}${since.at ? ` (${ago(since.at)} ago)` : ""}, ${since.base.slice(0, 7)}`;
+  const what = `${SINCE_FROM[since.from]}${since.at ? ` (${agoText(since.at)})` : ""}, ${since.base.slice(0, 7)}`;
   if (since.kind === "same") return <Text style={muted}>No new commits since {what}.</Text>;
   if (since.kind === "rewritten")
     return (

@@ -8,7 +8,7 @@ import { inboxSettings } from "../shared/settings";
 import { openScreen } from "./nav";
 import { useOpenUrl } from "./openUrl";
 import { REVIEW_SCREEN } from "./ReviewScreen";
-import { ago, Chip, MONO, Pill, verdictColor } from "./ui";
+import { ago, agoText, Chip, MONO, Pill, verdictColor } from "./ui";
 import { useInbox } from "./useInbox";
 
 export const INBOX_SCREEN = "inbox";
@@ -220,7 +220,7 @@ export function InboxScreen({ theme, layout, navigation }: PluginScreenProps) {
   return (
     <ScrollView style={{ flex: 1, backgroundColor: theme.colors.surface0 }} contentContainerStyle={{ padding: pad, gap: 14, width: "100%", maxWidth: 900, alignSelf: "center" }}>
       <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
-        <Text style={{ ...muted, flex: 1 }}>{view?.lastPollAt ? `Polled ${ago(view.lastPollAt)} ago` : "Not polled yet"}</Text>
+        <Text style={{ ...muted, flex: 1 }}>{view?.lastPollAt ? `Polled ${agoText(view.lastPollAt)}` : "Not polled yet"}</Text>
         <Chip theme={theme} label={polling ? "Polling…" : "Poll now"} disabled={polling} onPress={() => void pollNow()} />
       </View>
       <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
