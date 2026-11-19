@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { GithubSource, PrDetailsCache, queryArgs, summarizeChecks } from "../server/github";
+import { GithubSource, PrDetailsCache, prOutcome, queryArgs, summarizeChecks } from "../server/github";
 import { prState } from "../shared/review";
 
 import { fetchPrUpstream } from "../server/upstream";
@@ -412,5 +412,20 @@ describe("PrDetailsCache", () => {
     expect(prState(details)).toEqual({ state: "merged", at: "2026-11-16T17:13:41Z" });
     expect(prState({ ...details, mergedAt: null })).toEqual({ state: "closed", at: "2026-11-16T17:13:42Z" });
     expect(prState({ ...details, mergedAt: null, closedAt: null })).toEqual({ state: "open", at: "2026-11-04T10:00:00Z" });
+  });
+});
+
+describe("prOutcome", () => {
+  const view = (body: object) => async () => JSON.stringify(body);
+  it("maps the PR's state and finds a submitted review by the signed-in login", async () => {
+    expect(await prOutcome("acme/shop", 7, "Dawid", undefined, view({ state: "MERGED", latestReviews: [{ author: { login: "dawid" }, state: "APPROVED" }] }))).toEqual({ state: "merged", reviewedByMe: true });
+    expect(await prOutcome("acme/shop", 7, "dawid", undefined, view({ state: "CLOSED", latestReviews: [] }))).toEqual({ state: "closed", reviewedByMe: false });
+    expect(await prOutcome("acme/shop", 7, "dawid", undefined, view({ state: "OPEN", latestReviews: [{ author: { login: "ana" }, state: "COMMENTED" }, { author: { login: "dawid" }, state: "PENDING" }] }))).toEqual({ state: "open", reviewedByMe: false });
+    expect(await prOutcome("acme/shop", 7, "", undefined, view({ state: "OPEN", latestReviews: [{ author: null, state: "COMMENTED" }] }))).toEqual({ state: "open", reviewedByMe: false });
+  });
+  it("counts only reviews submitted since the run was created: an earlier round's review isn't this run's outcome", async () => {
+    const reviews = view({ state: "OPEN", latestReviews: [{ author: { login: "dawid" }, state: "APPROVED", submittedAt: "2026-11-10T10:00:00Z" }] });
+    expect(await prOutcome("acme/shop", 7, "dawid", "2026-11-12T00:00:00Z", reviews)).toEqual({ state: "open", reviewedByMe: false });
+    expect(await prOutcome("acme/shop", 7, "dawid", "2026-11-09T00:00:00Z", reviews)).toEqual({ state: "open", reviewedByMe: true });
   });
 });

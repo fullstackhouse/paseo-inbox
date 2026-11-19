@@ -1,9 +1,11 @@
-import { DISMISSED, draftsReviews, latestRound, modeFor, moveRun, noCheckoutReason, plan, renderPrompt, providerFor, reopen, reopenable, requeue, runId, setRun, startable, type Config, type InboxView, type Pr, type Run, type State } from "../shared/inbox";
+import { DISMISSED, draftsReviews, explainedReason, unexplained, type PrOutcome, latestRound, modeFor, moveRun, noCheckoutReason, plan, renderPrompt, providerFor, reopen, reopenable, requeue, runId, setRun, startable, type Config, type InboxView, type Pr, type Run, type State } from "../shared/inbox";
 import { askedAgain, type ReviewRequest } from "../shared/rereview";
 import type { Verdict } from "../shared/review";
 
 /** At most this many "asked again?" timeline reads per poll. */
 const REOPEN_CHECKS = 10;
+/** At most this many "why did it leave?" PR reads per poll; older runs catch up over later polls. */
+const EXPLAIN_CHECKS = 10;
 const SETTLED: ReadonlySet<Run["state"]> = new Set(["done", "stale", "failed"]);
 
 export interface StartRequest {
@@ -38,6 +40,8 @@ export interface InboxDeps {
   requests?: (pr: Pr) => Promise<ReviewRequest[]>;
   /** The signed-in GitHub login. */
   me?: () => Promise<string>;
+  /** Where a PR stands on GitHub, so a run whose PR left its source says merged, closed or reviewed. */
+  outcome?: (pr: Pr, since?: string) => Promise<PrOutcome>;
   /** A run's review draft: whether it was posted, and the verdict it posts as. */
   draftOf?: (runId: string) => { posted: boolean; verdict: Verdict } | null;
   /** Whether a run has a review draft on disk; cheaper than `draftOf`, asked on every list. */
@@ -59,6 +63,8 @@ export class Inbox {
   private login: string | null = null;
   /** Per settled run: the PR's `updatedAt` when it was last checked for a new request. A request bumps it. */
   private readonly checked = new Map<string, string>();
+  /** Runs `explainLeft` already looked up in this process, so a failing read isn't retried every poll. */
+  private readonly explained = new Set<string>();
   private readonly now: () => string;
 
   constructor(private readonly deps: InboxDeps) {
@@ -148,6 +154,7 @@ export class Inbox {
     );
     this.commit(plan({ config, results, state: this.state, now: this.now() }));
     await this.reopenAsked(config, results);
+    await this.explainLeft();
     this.lastPollAt = this.now();
     this.errors = errors;
     await this.dispatch(config);
@@ -175,6 +182,29 @@ export class Inbox {
         this.commit(reopen(this.state, config, current, ask, this.deps.draftOf?.(run.id) ?? null, this.now()));
       } catch (error) {
         console.error("inbox: review-request check failed", run.itemKey, message(error));
+      }
+    }
+  }
+
+  /**
+   * A PR leaving a source says only that it left: look up whether it was merged, closed or reviewed
+   * on GitHub, so the done row can say which. Keeps `updatedAt`: `reopenAsked` measures from it.
+   */
+  private async explainLeft(): Promise<void> {
+    if (!this.deps.outcome) return;
+    const due = this.state.runs.filter((run) => unexplained(run) && !this.explained.has(run.id)).slice(0, EXPLAIN_CHECKS);
+    for (const run of due) {
+      this.explained.add(run.id);
+      const pr = this.state.items[run.itemKey]?.pr;
+      if (!pr) continue;
+      try {
+        const outcome = await this.deps.outcome(pr, run.createdAt);
+        const current = this.run(run.id);
+        if (!current || !unexplained(current)) continue;
+        const reason = explainedReason(current.source, outcome);
+        this.commit({ ...this.state, runs: this.state.runs.map((candidate) => (candidate.id === run.id ? { ...candidate, reason } : candidate)) });
+      } catch (error) {
+        console.error("inbox: PR outcome check failed", run.itemKey, message(error));
       }
     }
   }
