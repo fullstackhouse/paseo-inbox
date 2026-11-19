@@ -1,7 +1,10 @@
 import type { PluginTheme } from "@getpaseo/plugin";
 import type { ReactNode } from "react";
 import { Platform, Pressable, Text, type StyleProp, type TextStyle, type ViewStyle } from "react-native";
+import { agoText } from "../shared/ago";
 import { prState, type PrDetails, type Severity } from "../shared/review";
+
+export { ago, agoText } from "../shared/ago";
 
 export const MONO = Platform.select({ ios: "Menlo", android: "monospace", default: "ui-monospace, SFMono-Regular, Menlo, monospace" });
 
@@ -40,7 +43,7 @@ export function Pill({ theme, color, outlined, children }: { theme: PluginTheme;
 export function PrStatePill({ theme, details }: { theme: PluginTheme; details: Pick<PrDetails, "createdAt" | "closedAt" | "mergedAt"> }) {
   const { state, at } = prState(details);
   if (state === "open") return null;
-  return <Pill theme={theme} color={state === "merged" ? theme.colors.statusSuccess : theme.colors.statusDanger}>{state} {ago(at)} ago</Pill>;
+  return <Pill theme={theme} color={state === "merged" ? theme.colors.statusSuccess : theme.colors.statusDanger}>{state} {agoText(at)}</Pill>;
 }
 
 export function Chip({ theme, label, onPress, active, style, textStyle, accessibilityLabel, disabled }: { theme: PluginTheme; label: string; onPress: () => void; active?: boolean; style?: StyleProp<ViewStyle>; textStyle?: StyleProp<TextStyle>; accessibilityLabel?: string; disabled?: boolean }) {
@@ -59,10 +62,3 @@ export function Chip({ theme, label, onPress, active, style, textStyle, accessib
   );
 }
 
-export function ago(iso: string): string {
-  const minutes = Math.round((Date.now() - Date.parse(iso)) / 60_000);
-  if (minutes < 1) return "now";
-  if (minutes < 60) return `${minutes}m`;
-  const hours = Math.round(minutes / 60);
-  return hours < 48 ? `${hours}h` : `${Math.round(hours / 24)}d`;
-}

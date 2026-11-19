@@ -10,7 +10,7 @@ import { FileDiff, type DiffActions } from "./FileDiff";
 import { GitHubTab } from "./GitHubTab";
 import { Markdown } from "./Markdown";
 import { useOpenUrl } from "./openUrl";
-import { ago, Chip, MONO, PrStatePill } from "./ui";
+import { agoText, Chip, MONO, PrStatePill } from "./ui";
 
 type Preview = { repo: string; number: number; url: string; details: PrDetails };
 type Tab = "description" | "files" | "github";
@@ -104,7 +104,7 @@ export function PrPreview(props: {
             <Text style={muted}>
               {details.author} · {details.headRef} → {details.baseRef} · <Text style={{ fontFamily: MONO }}>{details.headSha.slice(0, 7)}</Text> ·{" "}
               <Text style={{ color: theme.colors.statusSuccess }}>+{details.additions}</Text>{" "}
-              <Text style={{ color: theme.colors.statusDanger }}>−{details.deletions}</Text> · {details.changedFiles} files · opened {ago(details.createdAt)} ago
+              <Text style={{ color: theme.colors.statusDanger }}>−{details.deletions}</Text> · {details.changedFiles} files · opened {agoText(details.createdAt)}
             </Text>
           ) : null}
           <Deployments theme={theme} entries={deployments.data} onOpen={openUrl} />
