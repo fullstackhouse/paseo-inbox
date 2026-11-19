@@ -131,7 +131,12 @@ export function ReviewScreen({ theme, layout, navigation, params, setTitle }: Pl
   });
   const [openFiles, setOpenFiles] = useState<Set<string>>(new Set());
   const [closedChapters, setClosedChapters] = useState<Set<number>>(new Set());
-  const [busy, setBusy] = useState<string | null>(null);
+  // Actions in flight, per run: a post still going on one review neither blocks nor labels the next one.
+  const [pending, setPending] = useState<Record<string, string>>({});
+  const busy = pending[runId] ?? null;
+  // The run on screen now, for results that land after the human moved to another review.
+  const shown = useRef(runId);
+  shown.current = runId;
   const scroll = useRef<ScrollView>(null);
   const carried = useRef<string | null>(null);
   // Jump-to-file on native: where the content, the Files list and each file card in it sit (web measures the DOM, see fileTop).
@@ -282,61 +287,78 @@ export function ReviewScreen({ theme, layout, navigation, params, setTitle }: Pl
     [discuss, runId, run?.agentId, navigation],
   );
 
+  /** The draft a run's RPC returned, kept only while that run is still on screen. */
+  const keepDraft = (id: string, value: ReviewDraft) => {
+    if (shown.current === id) setDraft(value);
+  };
   const actions: DiffActions = {
     editable,
     onChange: async (commentId, change) => {
+      const id = runId;
       try {
-        setDraft(await changeComment({ runId, commentId, ...rpcChange(change) }));
+        keepDraft(id, await changeComment({ runId: id, commentId, ...rpcChange(change) }));
       } catch (caught) {
-        fail(caught);
+        if (shown.current === id) fail(caught);
       }
     },
     onDelete: async (commentId) => {
+      const id = runId;
       try {
-        setDraft(await deleteComment({ runId, commentId }));
+        keepDraft(id, await deleteComment({ runId: id, commentId }));
       } catch (caught) {
-        fail(caught);
+        if (shown.current === id) fail(caught);
       }
     },
     onAdd: async (comment) => {
+      const id = runId;
       try {
-        setDraft(await addComment({ runId, ...comment, severity: rpcSeverity(comment.severity) }));
+        keepDraft(id, await addComment({ runId: id, ...comment, severity: rpcSeverity(comment.severity) }));
       } catch (caught) {
-        fail(caught);
+        if (shown.current === id) fail(caught);
       }
     },
     onAsk: ask,
   };
 
-  const act = async (label: string, action: () => Promise<void>) => {
-    setBusy(label);
+  /**
+   * Runs an action for the run on screen. It's busy (and labelled) for that run only, and its result
+   * lands only while that run is still shown: `here()` says so. A failure after the human moved on
+   * still shows, named by its PR. The inbox list refreshes in the background, after the button frees.
+   */
+  const act = async (label: string, action: (here: () => boolean) => Promise<void>) => {
+    const id = runId;
+    const what = prLabel;
+    setPending((current) => ({ ...current, [id]: label }));
     setError(null);
     try {
-      await action();
+      await action(() => shown.current === id);
     } catch (caught) {
-      fail(caught);
+      const message = caught instanceof Error ? caught.message : String(caught);
+      setError(shown.current === id ? message : `${what}: ${message}`);
     } finally {
-      setBusy(null);
+      setPending(({ [id]: _done, ...rest }) => rest);
+      void refresh();
     }
   };
   const submit = () =>
-    act("post", async () => {
+    act("post", async (here) => {
       const result = await post({ runId });
+      if (!here()) return;
       setDraft((current) => (current ? { ...current, postedUrl: result.url, postedVerdict: effectiveVerdict(current) } : current));
       setNotice(`Posted: ${result.inline} inline${result.folded ? `, ${result.folded} in the review body` : ""}.`);
-      await refresh();
     });
+  // Moves on at once; the dismiss finishes in the background.
   const done = () =>
-    act("done", async () => {
-      if (run) await dismiss({ itemKey: run.itemKey, rule: run.rule });
-      await refresh();
+    act("done", async (here) => {
       if (next) setRunId(next);
-      else setNotice("Dismissed. Later pushes won't draft this PR again.");
+      if (run) await dismiss({ itemKey: run.itemKey, rule: run.rule });
+      if (here()) setNotice("Dismissed. Later pushes won't draft this PR again.");
     });
   const carry = () =>
-    act("reanchor", async () => {
+    act("reanchor", async (here) => {
       const result = await reanchor({ runId });
       await refresh();
+      if (!here()) return;
       // Shown once the screen has reset for the new run id.
       carried.current = `Comments moved to the new head: ${result.moved} moved, ${result.unchanged} unchanged${result.drifted ? `, ${result.drifted} drifted (their line changed; they go in the review body)` : ""}.`;
       setRunId(result.runId);
@@ -348,10 +370,9 @@ export function ReviewScreen({ theme, layout, navigation, params, setTitle }: Pl
       await refresh();
     });
   const rerun = () =>
-    act("redraft", async () => {
+    act("redraft", async (here) => {
       if (run) await redraft({ itemKey: run.itemKey, rule: run.rule });
-      await refresh();
-      setNotice("Re-drafting at the new head. It appears in the Inbox when it's ready.");
+      if (here()) setNotice("Re-drafting at the new head. It appears in the Inbox when it's ready.");
     });
 
   const toggleFile = (path: string, force?: boolean) =>
@@ -423,7 +444,7 @@ export function ReviewScreen({ theme, layout, navigation, params, setTitle }: Pl
     const parsed = parsePrRef(prRef);
     const prLabel = parsed ? `${parsed.repo}#${parsed.number}` : prRef;
     const start = async () => {
-      setBusy("start");
+      setPending((current) => ({ ...current, "": "start" }));
       setError(null);
       try {
         const started = await startReview({ ref: prRef });
@@ -432,7 +453,7 @@ export function ReviewScreen({ theme, layout, navigation, params, setTitle }: Pl
       } catch (caught) {
         fail(caught);
       } finally {
-        setBusy(null);
+        setPending(({ "": _done, ...rest }) => rest);
       }
     };
     return (
@@ -876,12 +897,12 @@ export function ReviewScreen({ theme, layout, navigation, params, setTitle }: Pl
                 loadPeople={() => people({ itemKey: run.itemKey })}
                 onCancel={() => setHandingOff(false)}
                 onHandoff={(input) =>
-                  act("handoff", async () => {
+                  act("handoff", async (here) => {
                     const result = await handoff({ runId, ...input });
+                    if (!here()) return;
                     setHandingOff(false);
                     setNotice(`Handed off to ${input.to.startsWith("@") ? input.to : `@${input.to}`}.`);
                     setDraft((current) => (current ? { ...current, postedUrl: result.url } : current));
-                    await refresh();
                   })
                 }
               />
@@ -905,10 +926,17 @@ export function ReviewScreen({ theme, layout, navigation, params, setTitle }: Pl
                   style={small}
                   textStyle={{ fontSize: 12 }}
                   onPress={() =>
-                    void act("verdict", async () => {
-                      setDraft(await setVerdict({ runId, verdict: option }));
-                      // The chat pill's Post item names the verdict.
-                      await refresh();
+                    void act("verdict", async (here) => {
+                      // Picked at once; the saved draft replaces it (the chat pill's Post item names the verdict, via the refresh).
+                      const before = draft;
+                      setDraft((current) => (current ? { ...current, verdictOverride: option } : current));
+                      try {
+                        const saved = await setVerdict({ runId, verdict: option });
+                        if (here()) setDraft(saved);
+                      } catch (caught) {
+                        if (here()) setDraft(before);
+                        throw caught;
+                      }
                     })
                   }
                 />
