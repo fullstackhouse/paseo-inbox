@@ -393,7 +393,8 @@ Writing: plain words and short sentences that someone who hasn't read the diff c
 
 References: on GitHub a bare #N links to PR or issue N of the reviewed repository. Write a PR or issue in any other repository in full as owner/repo#N (or its full URL) every time you mention it, never shortened to #N, even right after you wrote it in full.
 
-summary (markdown): what the PR does and why, general to specific. Always use these ### sections in order, each opening with its emoji, and leave out any with nothing real in them: 🎯 the problem (no identifiers), 🔧 the fix, 🔍 details, ⚠️ worth knowing. Describe the PR, not your review of it.
+summary (markdown): what the PR does and why, general to specific. Always use these ### sections in order, each opening with its emoji, and leave out any with nothing real in them: 🎯 the problem (no identifiers), 🔧 the fix, 🧩 how the pieces fit, 🔍 details, ⚠️ worth knowing. Describe the PR, not your review of it.
+🧩 only when the PR adds a flow or changes how parts work together, even inside one module; small internal changes skip it. Draw one \`flowchart TD\` Mermaid diagram per level that changed (system, modules, inside a module), each with a sentence or two and about 12 nodes at most: plain labels in double quotes, every arrow labelled with what passes along it, and "today" and "after" subgraphs when an existing flow changes. When the PR description already has a fitting diagram, reuse it rather than drawing another.
 
 reasoning (markdown): one lead sentence naming the deciding finding, or "No blockers.", then 2-5 bullets, each opening with a bolded two-to-three-word lead and holding one fact ("**Ran the tests** — ..."). End with what you couldn't settle and what would settle it.
 
