@@ -33,7 +33,10 @@ function InboxItem({ currentScreen, openScreen, theme }: PluginSidebarItemProps)
 }
 
 export default function contribute(client: PluginClientContext) {
-  setOpenScreen((input) => client.openScreen(input));
+  // COMPAT(screenTabLocation): FSH hosts list "explorer" in `screenTabLocations`; @getpaseo/plugin 0.15.3 has no
+  // type for it. Drop the cast once the SDK ships it.
+  const { screenTabLocations } = client as { screenTabLocations?: readonly string[] };
+  setOpenScreen((input) => client.openScreen(input), { explorerTabs: screenTabLocations?.includes("explorer") ?? false });
   client.addScreen({ id: INBOX_SCREEN, title: "Inbox", Component: InboxScreen });
   client.addScreen({ id: REVIEW_SCREEN, title: "Review", Component: ReviewScreen });
   client.addSettingsScreen({ id: "inbox", title: "Inbox", icon: "Inbox", Component: InboxSettings });
