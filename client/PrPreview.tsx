@@ -1,4 +1,5 @@
 import type { PluginTheme } from "@getpaseo/plugin";
+import type { PluginScreenProps } from "@getpaseo/plugin/client";
 import { useRpc } from "@getpaseo/plugin/client";
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
@@ -10,6 +11,7 @@ import { FileDiff, type DiffActions } from "./FileDiff";
 import { GitHubTab } from "./GitHubTab";
 import { Markdown } from "./Markdown";
 import { useOpenUrl } from "./openUrl";
+import { usePrTabTitle } from "./prTabTitle";
 import { agoText, Chip, MONO, PrStatePill } from "./ui";
 
 type Preview = { repo: string; number: number; url: string; details: PrDetails };
@@ -33,6 +35,7 @@ export function PrPreview(props: {
   compact: boolean;
   prRef: string;
   prLabel: string;
+  setTitle: PluginScreenProps["setTitle"];
   starting: boolean;
   error: string | null;
   onStart(): void;
@@ -75,6 +78,7 @@ export function PrPreview(props: {
       live = false;
     };
   }, [load, prRef]);
+  usePrTabTitle(props.setTitle, preview?.details.title ? { ...preview, title: preview.details.title } : null);
 
   const muted = { color: theme.colors.foregroundMuted, fontSize: 13 };
   const pad = compact ? 14 : 24;

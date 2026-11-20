@@ -3,6 +3,7 @@ import { useRpc } from "@getpaseo/plugin/client";
 import { useQuery } from "@tanstack/react-query";
 import { deployRefetch, getPrDeployments, getPrUpstream } from "../shared/upstream";
 import { Deployments } from "./Deployments";
+import { usePrTabTitle } from "./prTabTitle";
 import { GitHubTab } from "./GitHubTab";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Platform, Pressable, ScrollView, Text, View } from "react-native";
@@ -80,12 +81,7 @@ export function ReviewScreen({ theme, layout, navigation, params, setTitle }: Pl
   }, [byPr, runId]);
   const run = view?.runs.find((candidate) => candidate.id === runId) ?? null;
   const pr = run ? view?.items[run.itemKey]?.pr : undefined;
-  // Name the tab after its PR, so two open reviews don't both read "Review".
-  const prLabel = pr ? `#${pr.number} ${pr.title}` : "";
-  const prTooltip = pr ? `${pr.repo}#${pr.number} ${pr.title}` : "";
-  useEffect(() => {
-    if (prLabel) setTitle?.({ label: prLabel, tooltip: prTooltip });
-  }, [prLabel, prTooltip, setTitle]);
+  const prLabel = usePrTabTitle(setTitle, pr);
 
   const fetchDraft = useRpc(getReview);
   const restoreDraft = useRpc(restoreRun);
@@ -461,6 +457,7 @@ export function ReviewScreen({ theme, layout, navigation, params, setTitle }: Pl
         compact={layout.compact}
         prRef={prRef}
         prLabel={prLabel}
+        setTitle={setTitle}
         starting={busy === "start"}
         error={error}
         onStart={() => void start()}
