@@ -164,9 +164,13 @@ export function InboxScreen({ theme, layout, navigation }: PluginScreenProps) {
     const ended = doneStatus(run);
     const detail = draft ? draft.detail : ended ? (ended.detail ?? run.rule) : running ? runningDetail(run, view) : clone ? `Found a clone at ${clone}` : run.state === "no-checkout" && pr ? `No clone of ${pr.repo} on this machine. Add one under Settings → Inbox → Repos on this machine.` : (run.reason ?? run.rule);
     const checked = picked.has(run.id);
+    const canRun = run.state !== "running" && run.state !== "queued" && run.state !== "no-checkout";
+    const canDismiss = run.state !== "running" && run.state !== "done";
+    // The card is a plain container: on web a pressable renders a <button>, and a <button> can't hold the
+    // checkbox and the action chips. The open target is the PR's text; the controls sit beside it.
     return (
-      <Pressable accessibilityRole={tappable ? "button" : undefined} disabled={!tappable} onPress={open} style={({ pressed }) => ({ backgroundColor: pressed ? theme.colors.surface2 : theme.colors.surface1, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, gap: 4 })}>
-        <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+      <View style={{ backgroundColor: theme.colors.surface1, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, gap: 8 }}>
+        <View style={{ flexDirection: "row", alignItems: "flex-start", gap: 8 }}>
           {postable(run) ? (
             <Pressable
               accessibilityRole="checkbox"
@@ -175,45 +179,53 @@ export function InboxScreen({ theme, layout, navigation }: PluginScreenProps) {
               disabled={posting !== null}
               hitSlop={8}
               onPress={() => toggle(run.id)}
-              style={{ width: 18, height: 18, borderRadius: 4, borderWidth: 1.5, borderColor: checked ? theme.colors.accent : theme.colors.foregroundMuted, backgroundColor: checked ? theme.colors.accent : "transparent", alignItems: "center", justifyContent: "center" }}
+              style={{ marginTop: 1, width: 18, height: 18, borderRadius: 4, borderWidth: 1.5, borderColor: checked ? theme.colors.accent : theme.colors.foregroundMuted, backgroundColor: checked ? theme.colors.accent : "transparent", alignItems: "center", justifyContent: "center" }}
             >
               {checked ? <Text style={{ color: theme.colors.accentForeground, fontSize: 12, fontWeight: "700", lineHeight: 14 }}>✓</Text> : null}
             </Pressable>
           ) : null}
-          <View style={{ flex: 1, flexDirection: "row", alignItems: "center", gap: 8, minWidth: 0 }}>
-            <Text style={{ ...muted, fontFamily: MONO, fontSize: 12, flexShrink: 1 }} numberOfLines={1}>
-              {run.itemKey.replace(/^[^/]+\//, "")}
-              {pr?.author && !isMine(pr, view?.me) ? `  ·  ${pr.author}` : ""}
+          <Pressable accessibilityRole={tappable ? "button" : undefined} disabled={!tappable} onPress={open} style={({ pressed }) => ({ flex: 1, minWidth: 0, gap: 4, opacity: pressed ? 0.6 : 1 })}>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+              <View style={{ flex: 1, flexDirection: "row", alignItems: "center", gap: 8, minWidth: 0 }}>
+                <Text style={{ ...muted, fontFamily: MONO, fontSize: 12, flexShrink: 1 }} numberOfLines={1}>
+                  {run.itemKey.replace(/^[^/]+\//, "")}
+                  {pr?.author && !isMine(pr, view?.me) ? `  ·  ${pr.author}` : ""}
+                </Text>
+                {/* accent on accentForeground: themes pair them for contrast; accent text alone fades on dark surfaces. */}
+                {isMine(pr, view?.me) ? <Text style={{ color: theme.colors.accentForeground, backgroundColor: theme.colors.accent, borderRadius: 999, paddingHorizontal: 7, paddingVertical: 1, fontSize: 11, fontWeight: "600", overflow: "hidden" }}>you</Text> : null}
+              </View>
+              {pr ? (
+                <Text style={{ fontFamily: MONO, fontSize: 12 }}>
+                  <Text style={{ color: theme.colors.statusSuccess }}>+{pr.additions}</Text> <Text style={{ color: theme.colors.statusDanger }}>−{pr.deletions}</Text>
+                </Text>
+              ) : null}
+              <Text style={{ ...muted, fontSize: 12 }}>{ago(run.updatedAt)}</Text>
+            </View>
+            <Text style={{ color: theme.colors.foreground, fontSize: 15, fontWeight: "500", lineHeight: 20 }} numberOfLines={2}>
+              {pr?.title ?? run.itemKey}
             </Text>
-            {/* accent on accentForeground: themes pair them for contrast; accent text alone fades on dark surfaces. */}
-            {isMine(pr, view?.me) ? <Text style={{ color: theme.colors.accentForeground, backgroundColor: theme.colors.accent, borderRadius: 999, paddingHorizontal: 7, paddingVertical: 1, fontSize: 11, fontWeight: "600", overflow: "hidden" }}>you</Text> : null}
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+              {draft ? <Pill theme={theme} color={verdictColor(theme, draft.verdict)}>{draft.verdict}</Pill> : null}
+              {ended ? <Pill theme={theme} color={toneColor(theme, ended.tone)} outlined={ended.tone === "muted"}>{ended.label}</Pill> : null}
+              {running ? <ActivityIndicator size="small" color={theme.colors.foregroundMuted} accessibilityLabel="Running" /> : null}
+              <Text style={{ ...muted, flex: 1 }} numberOfLines={2}>
+                {detail}
+              </Text>
+            </View>
+          </Pressable>
+        </View>
+        {(clone && pr) || canRun || canDismiss ? (
+          <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: 8, flexWrap: "wrap" }}>
+            {clone && pr ? <Chip theme={theme} label="Use it" active disabled={rowBusy} style={{ paddingVertical: 4, paddingHorizontal: 10 }} textStyle={{ fontSize: 12 }} onPress={() => void adoptClone(key, pr.repo, clone)} /> : null}
+            {canRun ? (
+              <Chip theme={theme} label={busy === `${key}:run` ? "Starting…" : run.agentId ? "Rerun" : "Run now"} disabled={rowBusy} style={{ paddingVertical: 4, paddingHorizontal: 10 }} textStyle={{ fontSize: 12 }} onPress={() => void act(`${key}:run`, () => rerun({ itemKey: run.itemKey, rule: run.rule }))} />
+            ) : null}
+            {canDismiss ? (
+              <Chip theme={theme} label={busy === `${key}:dismiss` ? "Dismissing…" : "Dismiss"} disabled={rowBusy} style={{ paddingVertical: 4, paddingHorizontal: 10 }} textStyle={{ fontSize: 12 }} onPress={() => void act(`${key}:dismiss`, () => dismiss({ itemKey: run.itemKey, rule: run.rule }))} />
+            ) : null}
           </View>
-          {pr ? (
-            <Text style={{ fontFamily: MONO, fontSize: 12 }}>
-              <Text style={{ color: theme.colors.statusSuccess }}>+{pr.additions}</Text> <Text style={{ color: theme.colors.statusDanger }}>−{pr.deletions}</Text>
-            </Text>
-          ) : null}
-          <Text style={{ ...muted, fontSize: 12 }}>{ago(run.updatedAt)}</Text>
-        </View>
-        <Text style={{ color: theme.colors.foreground, fontSize: 15, fontWeight: "500", lineHeight: 20 }} numberOfLines={2}>
-          {pr?.title ?? run.itemKey}
-        </Text>
-        <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-          {draft ? <Pill theme={theme} color={verdictColor(theme, draft.verdict)}>{draft.verdict}</Pill> : null}
-          {ended ? <Pill theme={theme} color={toneColor(theme, ended.tone)} outlined={ended.tone === "muted"}>{ended.label}</Pill> : null}
-          {running ? <ActivityIndicator size="small" color={theme.colors.foregroundMuted} accessibilityLabel="Running" /> : null}
-          <Text style={{ ...muted, flex: 1 }} numberOfLines={2}>
-            {detail}
-          </Text>
-          {clone && pr ? <Chip theme={theme} label="Use it" active disabled={rowBusy} style={{ paddingVertical: 4, paddingHorizontal: 10 }} textStyle={{ fontSize: 12 }} onPress={() => void adoptClone(key, pr.repo, clone)} /> : null}
-          {run.state !== "running" && run.state !== "queued" && run.state !== "no-checkout" ? (
-            <Chip theme={theme} label={busy === `${key}:run` ? "Starting…" : run.agentId ? "Rerun" : "Run now"} disabled={rowBusy} style={{ paddingVertical: 4, paddingHorizontal: 10 }} textStyle={{ fontSize: 12 }} onPress={() => void act(`${key}:run`, () => rerun({ itemKey: run.itemKey, rule: run.rule }))} />
-          ) : null}
-          {run.state !== "running" && run.state !== "done" ? (
-            <Chip theme={theme} label={busy === `${key}:dismiss` ? "Dismissing…" : "Dismiss"} disabled={rowBusy} style={{ paddingVertical: 4, paddingHorizontal: 10 }} textStyle={{ fontSize: 12 }} onPress={() => void act(`${key}:dismiss`, () => dismiss({ itemKey: run.itemKey, rule: run.rule }))} />
-          ) : null}
-        </View>
-      </Pressable>
+        ) : null}
+      </View>
     );
   };
 
