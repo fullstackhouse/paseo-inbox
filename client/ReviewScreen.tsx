@@ -41,6 +41,7 @@ import { HandoffPanel, PreviewPane } from "./Decide";
 import { FileDiff, type DiffActions } from "./FileDiff";
 import { FileIndex } from "./FileIndex";
 import { Markdown } from "./Markdown";
+import { openReviewerChat } from "./nav";
 import { PrPreview } from "./PrPreview";
 import { useOpenUrl } from "./openUrl";
 import { agoText, Chip, MONO, Pill, PrStatePill, STICKY, verdictColor } from "./ui";
@@ -271,7 +272,7 @@ export function ReviewScreen({ theme, layout, navigation, params, setTitle }: Pl
     async (question: string, about: string): Promise<boolean> => {
       try {
         await discuss({ runId, message: `About ${about}:\n\n${question}` });
-        if (run?.agentId && navigation) navigation.openAgent({ agentId: run.agentId });
+        if (run?.agentId && navigation) openReviewerChat(navigation, { ...run, agentId: run.agentId }, layout.compact);
         else setNotice("Sent to the reviewer.");
         return true;
       } catch (caught) {
@@ -279,7 +280,7 @@ export function ReviewScreen({ theme, layout, navigation, params, setTitle }: Pl
         return false;
       }
     },
-    [discuss, runId, run?.agentId, navigation],
+    [discuss, runId, run, navigation, layout.compact],
   );
 
   /** The draft a run's RPC returned, kept only while that run is still on screen. */
@@ -647,7 +648,7 @@ export function ReviewScreen({ theme, layout, navigation, params, setTitle }: Pl
             {details?.threads.length ? <Pill theme={theme} color={theme.colors.foregroundMuted}>{details.threads.length} comments from others</Pill> : null}
             <View style={{ flex: 1 }} />
             <Chip theme={theme} label="GitHub ↗" onPress={() => openUrl(pr.url)} />
-            {run.agentId && navigation ? <Chip theme={theme} label="Reviewer chat" onPress={() => navigation.openAgent({ agentId: run.agentId! })} /> : null}
+            {run.agentId && navigation ? <Chip theme={theme} label="Reviewer chat" onPress={() => openReviewerChat(navigation, { ...run, agentId: run.agentId! }, layout.compact)} /> : null}
           </View>
           {stale && run.state !== "running" ? (
             <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
@@ -691,7 +692,7 @@ export function ReviewScreen({ theme, layout, navigation, params, setTitle }: Pl
                 </Text>
                 <View style={{ flexDirection: "row", gap: 8 }}>
                   <Chip theme={theme} label="Files" style={small} textStyle={{ fontSize: 12 }} onPress={() => setTab("files")} />
-                  {run.agentId && navigation ? <Chip theme={theme} label="Watch the reviewer" style={small} textStyle={{ fontSize: 12 }} onPress={() => navigation.openAgent({ agentId: run.agentId! })} /> : null}
+                  {run.agentId && navigation ? <Chip theme={theme} label="Watch the reviewer" style={small} textStyle={{ fontSize: 12 }} onPress={() => openReviewerChat(navigation, { ...run, agentId: run.agentId! }, layout.compact)} /> : null}
                 </View>
               </View>
             ) : (
