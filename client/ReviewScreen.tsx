@@ -6,7 +6,7 @@ import { Deployments } from "./Deployments";
 import { usePrTabTitle } from "./prTabTitle";
 import { GitHubTab } from "./GitHubTab";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, Platform, Pressable, ScrollView, Switch, Text, View } from "react-native";
+import { ActivityIndicator, Platform, Pressable, ScrollView, Text, View } from "react-native";
 import { fileAt, nextUnviewed, stepFile } from "../shared/filetree";
 import { addPr, DISMISSED, parsePrRef, restoreRun, reviewRunFor, runNow, skipRun, type Run } from "../shared/inbox";
 import {
@@ -108,8 +108,6 @@ export function ReviewScreen({ theme, layout, navigation, params, setTitle }: Pl
   const [since, setSince] = useState<Since | null>(null);
   const [sinceOpen, setSinceOpen] = useState<Set<string>>(new Set());
   const [handingOff, setHandingOff] = useState(false);
-  // Most reviews end with the post, so its workspace goes too unless the human switches this off.
-  const [archiveAfter, setArchiveAfter] = useState(true);
   const [askingSummary, setAskingSummary] = useState(false);
   const openUrl = useOpenUrl();
 
@@ -338,9 +336,10 @@ export function ReviewScreen({ theme, layout, navigation, params, setTitle }: Pl
       void refresh();
     }
   };
-  const submit = () =>
-    act("post", async (here) => {
-      const result = await post({ runId, archive: archiveAfter && Boolean(run?.workspaceId) });
+  // "post-archive" also archives the run's workspace once the review is on GitHub.
+  const submit = (archive: boolean) =>
+    act(archive ? "post-archive" : "post", async (here) => {
+      const result = await post({ runId, archive });
       if (!here()) return;
       setDraft((current) => (current ? { ...current, postedUrl: result.url, postedVerdict: effectiveVerdict(current) } : current));
       setNotice(`Posted: ${result.inline} inline${result.folded ? `, ${result.folded} in the review body` : ""}.${result.kept ? ` Kept the workspace: ${result.kept}.` : ""}`);
@@ -944,25 +943,32 @@ export function ReviewScreen({ theme, layout, navigation, params, setTitle }: Pl
               <Chip theme={theme} label="Hand off" active={handingOff} disabled={Boolean(busy) || !run.agentId} style={small} textStyle={{ fontSize: 12 }} onPress={() => setHandingOff(!handingOff)} />
               <Chip theme={theme} label={busy === "done" ? "…" : next ? "Dismiss, next" : "Dismiss"} disabled={Boolean(busy)} style={small} textStyle={{ fontSize: 12 }} onPress={() => void done()} />
             </View>
-            {/* Its own row: beside the Post button it squeezes the comment count in a narrow Explorer sidebar. */}
-            {run.workspaceId ? (
-              <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-                <Switch value={archiveAfter} disabled={Boolean(busy)} onValueChange={setArchiveAfter} accessibilityLabel="Archive the workspace after posting" />
-                <Text style={muted}>Archive the workspace after posting</Text>
-              </View>
-            ) : null}
             <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
               <Text style={{ ...muted, flex: 1 }} numberOfLines={2}>
                 {stale ? `Posts on ${draft.version.slice(0, 7)}, where it was drafted; GitHub marks comments outdated where the code changed since. ` : ""}{`${live.length} comment${live.length === 1 ? "" : "s"}${folded ? ` (${folded} in the body)` : ""}${draft.comments.length > live.length ? ` · ${draft.comments.length - live.length} dropped` : ""}`}
               </Text>
+              {/* Most reviews end with the post, so Post & archive leads; plain Post keeps the reviewer to talk to. */}
+              {run.workspaceId ? (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`Post the review to GitHub as ${verdict} and keep the workspace`}
+                  disabled={!editable || Boolean(busy)}
+                  onPress={() => void submit(false)}
+                  style={{ borderWidth: 1, borderColor: theme.colors.border, paddingHorizontal: 14, paddingVertical: 9, borderRadius: 10, opacity: !editable || busy ? 0.5 : 1 }}
+                >
+                  <Text style={{ color: theme.colors.foreground, fontWeight: "600", fontSize: 14 }}>{busy === "post" ? "Posting…" : "Post"}</Text>
+                </Pressable>
+              ) : null}
               <Pressable
                 accessibilityRole="button"
-                accessibilityLabel={`Post the review to GitHub as ${verdict}`}
+                accessibilityLabel={run.workspaceId ? `Post the review to GitHub as ${verdict} and archive the workspace` : `Post the review to GitHub as ${verdict}`}
                 disabled={!editable || Boolean(busy)}
-                onPress={() => void submit()}
+                onPress={() => void submit(Boolean(run.workspaceId))}
                 style={{ backgroundColor: verdictColor(theme, verdict), paddingHorizontal: 16, paddingVertical: 10, borderRadius: 10, opacity: !editable || busy ? 0.5 : 1 }}
               >
-                <Text style={{ color: theme.colors.accentForeground, fontWeight: "600", fontSize: 14 }}>{busy === "post" ? "Posting…" : `Post as ${verdict}`}</Text>
+                <Text style={{ color: theme.colors.accentForeground, fontWeight: "600", fontSize: 14 }}>
+                  {busy === "post-archive" ? "Posting…" : run.workspaceId ? "Post & archive" : `Post as ${verdict}`}
+                </Text>
               </Pressable>
             </View>
           </View>
