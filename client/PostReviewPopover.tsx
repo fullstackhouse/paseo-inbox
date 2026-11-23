@@ -6,7 +6,7 @@ import { effectiveVerdict, postSummary, verdictMismatch, type PostSummary, type 
 import { Chip, verdictColor } from "./ui";
 
 /** The run the agent's pill can post, while it has one. One object per change, so it is a stable snapshot. */
-export type PostTarget = { runId: string; itemKey: string };
+export type PostTarget = { runId: string; itemKey: string; /** Your own PR: it posts as a comment. */ own: boolean };
 
 /** The pills module's state and actions, as the popover sees them. */
 export interface PostStore {
@@ -74,8 +74,8 @@ export function makePostPopover(store: PostStore): ComponentType<PluginButtonCon
 
     const { draft, summary } = loaded;
     const { posted, folded, replies, held, dropped } = summary;
-    const verdict = effectiveVerdict(draft);
-    const mismatch = verdictMismatch(draft);
+    const verdict = effectiveVerdict(draft, target.own);
+    const mismatch = verdictMismatch(draft, target.own);
     const post = async () => {
       setPosting(true);
       setError(null);

@@ -8,7 +8,7 @@ import { GitHubTab } from "./GitHubTab";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Platform, Pressable, ScrollView, Text, View } from "react-native";
 import { fileAt, nextUnviewed, stepFile } from "../shared/filetree";
-import { addPr, DISMISSED, parsePrRef, restoreRun, reviewRunFor, runNow, skipRun, type Run } from "../shared/inbox";
+import { addPr, DISMISSED, isMine, parsePrRef, restoreRun, reviewRunFor, runNow, skipRun, type Run } from "../shared/inbox";
 import {
   addReviewComment,
   deleteReviewComment,
@@ -26,7 +26,7 @@ import {
   setFileViewed,
   setReviewVerdict,
   updateReviewComment,
-  VerdictSchema,
+  verdictChoices,
   verdictMismatch,
   walkthrough,
   type CommentChange,
@@ -82,6 +82,8 @@ export function ReviewScreen({ theme, layout, navigation, params, setTitle }: Pl
   }, [byPr, runId]);
   const run = view?.runs.find((candidate) => candidate.id === runId) ?? null;
   const pr = run ? view?.items[run.itemKey]?.pr : undefined;
+  // GitHub refuses approve and request-changes on your own PR, so it only offers comment.
+  const own = isMine(pr, view?.me);
   const prLabel = usePrTabTitle(setTitle, pr);
 
   const fetchDraft = useRpc(getReview);
@@ -340,7 +342,7 @@ export function ReviewScreen({ theme, layout, navigation, params, setTitle }: Pl
     act("post", async (here) => {
       const result = await post({ runId });
       if (!here()) return;
-      setDraft((current) => (current ? { ...current, postedUrl: result.url, postedVerdict: effectiveVerdict(current) } : current));
+      setDraft((current) => (current ? { ...current, postedUrl: result.url, postedVerdict: effectiveVerdict(current, own) } : current));
       setNotice(`Posted: ${result.inline} inline${result.folded ? `, ${result.folded} in the review body` : ""}.`);
     });
   // Moves on at once; the dismiss finishes in the background.
@@ -484,8 +486,8 @@ export function ReviewScreen({ theme, layout, navigation, params, setTitle }: Pl
   const drafting = !draft && (run.state === "running" || run.state === "queued");
   const live = draft?.comments.filter((comment) => comment.status !== "dropped") ?? [];
   const folded = live.filter((comment) => details && placement(comment, files) !== "inline").length;
-  const verdict = draft ? effectiveVerdict(draft) : null;
-  const mismatch = draft ? verdictMismatch(draft) : null;
+  const verdict = draft ? effectiveVerdict(draft, own) : null;
+  const mismatch = draft ? verdictMismatch(draft, own) : null;
   const threadsFor = (path: string) => details?.threads.filter((thread) => thread.path === path) ?? [];
   const tabs: { id: Tab; label: string }[] = [
     { id: "summary", label: "Summary" },
@@ -913,7 +915,7 @@ export function ReviewScreen({ theme, layout, navigation, params, setTitle }: Pl
               </Text>
             ) : null}
             <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-              {VerdictSchema.options.map((option) => (
+              {verdictChoices(own).map((option) => (
                 <Chip
                   key={option}
                   theme={theme}
@@ -938,6 +940,11 @@ export function ReviewScreen({ theme, layout, navigation, params, setTitle }: Pl
                   }
                 />
               ))}
+              {own ? (
+                <Text style={{ ...muted, flexShrink: 1 }} numberOfLines={2}>
+                  Your own PR: GitHub doesn't let you approve it or request changes on it.
+                </Text>
+              ) : null}
               <View style={{ flex: 1 }} />
               <Chip theme={theme} label="Hand off" active={handingOff} disabled={Boolean(busy) || !run.agentId} style={small} textStyle={{ fontSize: 12 }} onPress={() => setHandingOff(!handingOff)} />
               <Chip theme={theme} label={busy === "done" ? "…" : next ? "Dismiss, next" : "Dismiss"} disabled={Boolean(busy)} style={small} textStyle={{ fontSize: 12 }} onPress={() => void done()} />

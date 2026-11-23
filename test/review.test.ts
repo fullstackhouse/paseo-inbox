@@ -22,6 +22,8 @@ import {
   ReviseInputSchema,
   toDraft,
   updateComment,
+  effectiveVerdict,
+  verdictChoices,
   verdictMismatch,
   walkthrough,
   withGrade,
@@ -124,6 +126,14 @@ describe("human edits", () => {
     expect(verdictMismatch({ ...draft, verdictOverride: "approve" })).toBe("Approving over 1 blocker");
     expect(verdictMismatch(updateComment(draft, "c1", { status: "dropped" }))).toBe("Requesting changes with no blocker left");
   });
+  it("offers and posts only comment on your own PR, which GitHub can't approve or block", () => {
+    expect(verdictChoices(false)).toEqual(["approve", "comment", "request-changes"]);
+    expect(verdictChoices(true)).toEqual(["comment"]);
+    expect(effectiveVerdict({ ...draft, verdictOverride: "approve" }, true)).toBe("comment");
+    expect(verdictMismatch({ ...draft, verdictOverride: "approve" }, true)).toBeNull();
+    expect(composeReview(draft, [], true).payload.event).toBe("COMMENT");
+    expect(composeReview(draft, []).payload.event).toBe("REQUEST_CHANGES");
+  });
   it("headline counts by grade", () => expect(draftHeadline(draft)).toBe("request-changes · 80% · 1 blocker, 2 minor, 1 note"));
 });
 
@@ -156,9 +166,15 @@ describe("reviewer revisions", () => {
 });
 
 /** An inbox with one running review run, agent `agent-1`, at PR head `aaaaaaa111`. */
-function setup() {
+function setup(me?: string) {
   let state: State = emptyState();
+  const reviews = new ReviewStore(mkdtempSync(join(tmpdir(), "inbox-reviews-")));
   const inbox = new Inbox({
+    ...(me ? { me: async () => me } : {}),
+    draftOf: (runId) => {
+      const draft = reviews.get(runId);
+      return draft ? { posted: Boolean(draft.postedUrl), verdict: draft.verdict } : null;
+    },
     loadConfig: () => config(),
     search: async (query) => (query.includes("review-requested") ? [pr()] : []),
     start: async () => ({ agentId: "agent-1", workspaceId: "ws" }),
@@ -166,7 +182,6 @@ function setup() {
     save: (next) => (state = next),
     now: () => NOW,
   });
-  const reviews = new ReviewStore(mkdtempSync(join(tmpdir(), "inbox-reviews-")));
   return { inbox, reviews, state: () => state };
 }
 const raw = { verdict: "request-changes", confidence: 80, summary: "s", comments: [{ path: PATH, line: 11, severity: "blocker", body: "b" }, { path: PATH, line: 99, body: "off" }] };
@@ -235,6 +250,18 @@ describe("postDraft", () => {
     expect(filesAt).toHaveBeenCalledWith("acme/shop", 7, "aaaaaaa111", moved);
     expect(post.mock.calls[0]![2]).toMatchObject({ commit_id: "aaaaaaa111", comments: [{ path: PATH, line: 11 }] });
     expect(state().runs[0]).toMatchObject({ state: "done" });
+  });
+
+  it("posts your own PR's review as a comment, whatever the draft's verdict", async () => {
+    const { inbox, reviews, state } = setup("Ola");
+    await inbox.poll();
+    await callTool(inbox, reviews, "agent-1", "inbox_review_draft", raw, NOW);
+    const runId = state().runs[0]!.id;
+    expect(inbox.view().postable).toEqual({ [runId]: "comment" });
+    const post = vi.fn(async (_repo: string, _number: number, _payload: unknown) => "u");
+    await postDraft(inbox, reviews, runId, post, async () => details("aaaaaaa111"), NOW);
+    expect(post.mock.calls[0]![2]).toMatchObject({ event: "COMMENT" });
+    expect(reviews.get(runId)).toMatchObject({ postedVerdict: "comment" });
   });
 
   it("folds every comment into the body when the moved-past diff is unknown", async () => {

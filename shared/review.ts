@@ -257,7 +257,14 @@ export function withGrade(body: string, severity: Severity): string {
   return severity ? `${SEVERITY_BADGE[severity]} **${severity}** — ${body}` : body;
 }
 
-export const effectiveVerdict = (draft: Pick<ReviewDraft, "verdict" | "verdictOverride">): Verdict => draft.verdictOverride ?? draft.verdict;
+/**
+ * The verdict a draft posts as. On your own PR GitHub refuses approve and request-changes, so `own`
+ * makes every draft a comment, whatever the reviewer or the human picked.
+ */
+export const effectiveVerdict = (draft: Pick<ReviewDraft, "verdict" | "verdictOverride">, own = false): Verdict => (own ? "comment" : (draft.verdictOverride ?? draft.verdict));
+
+/** The verdicts the human can pick: only comment on their own PR. */
+export const verdictChoices = (own: boolean): readonly Verdict[] => (own ? ["comment"] : VerdictSchema.options);
 
 const EVENTS: Record<Verdict, "APPROVE" | "COMMENT" | "REQUEST_CHANGES"> = {
   approve: "APPROVE",
@@ -269,7 +276,7 @@ const EVENTS: Record<Verdict, "APPROVE" | "COMMENT" | "REQUEST_CHANGES"> = {
  * GitHub's create-review payload. Comments on a diff line go inline; file-level comments and lines
  * outside the diff are folded into the body, because GitHub rejects the whole review over one of them.
  */
-export function composeReview(draft: ReviewDraft, files: readonly { path: string; patch?: string }[]) {
+export function composeReview(draft: ReviewDraft, files: readonly { path: string; patch?: string }[], own = false) {
   const posted = draft.comments.filter((comment) => comment.status !== "dropped");
   const held = posted.filter(isHeld);
   const replies = posted.filter((comment) => comment.raised !== null && comment.reply);
@@ -295,7 +302,7 @@ export function composeReview(draft: ReviewDraft, files: readonly { path: string
     held: held.length,
     payload: {
       commit_id: draft.version,
-      event: EVENTS[effectiveVerdict(draft)],
+      event: EVENTS[effectiveVerdict(draft, own)],
       body: draft.bodyOverride ?? generatedBody,
       comments: inline.map((comment) => ({ path: comment.path, line: comment.line!, side: comment.side, body: withGrade(comment.body, comment.severity) })),
     },
@@ -346,9 +353,9 @@ export function draftHeadline(draft: ReviewDraft): string {
 }
 
 /** "Approving over 2 blockers": the verdict disagrees with the findings still standing. */
-export function verdictMismatch(draft: ReviewDraft): string | null {
+export function verdictMismatch(draft: ReviewDraft, own = false): string | null {
   const blockers = draft.comments.filter((comment) => comment.status !== "dropped" && comment.severity === "blocker").length;
-  const verdict = effectiveVerdict(draft);
+  const verdict = effectiveVerdict(draft, own);
   if (verdict === "approve" && blockers) return `Approving over ${blockers} blocker${blockers > 1 ? "s" : ""}`;
   if (verdict === "request-changes" && !blockers) return "Requesting changes with no blocker left";
   return null;
