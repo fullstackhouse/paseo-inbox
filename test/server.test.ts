@@ -284,6 +284,13 @@ describe("Inbox", () => {
     expect(archive).not.toHaveBeenCalled();
   });
 
+  it("returns from archiving a posted run's workspace without waiting for the worktree to go", async () => {
+    const { inbox, saved } = harness({ review: [pr()] }, { archive: () => new Promise(() => {}), workspaceStatus: async () => "done" });
+    await inbox.poll();
+    inbox.turnEnded("agent-1", { kind: "completed" });
+    expect(await inbox.archiveRun(saved().runs[0]!.id)).toBeNull();
+  });
+
   it("Dismiss returns without waiting for the worktrees to archive", async () => {
     const { inbox, saved } = harness({ review: [pr()] }, { archive: () => new Promise(() => {}) });
     await inbox.poll();

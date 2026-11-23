@@ -387,8 +387,8 @@ export default function contribute(server: PluginServerContext) {
     capture(api);
     const posted = await postDraft(inbox, reviews, runId, (repo, number, payload) => postPullReview(repo, number, payload), details, undefined, ghJson, draftFilesAt);
     if (!archive) return posted;
-    // The review is on GitHub by now, so a failed archive only keeps the workspace.
-    const kept = await inbox.archiveRun(runId).catch((error: unknown) => `archiving failed: ${error instanceof Error ? error.message : String(error)}`);
+    // The review is on GitHub by now, so failing to read the workspace only keeps it.
+    const kept = await inbox.archiveRun(runId).catch((error: unknown) => `couldn't check it: ${error instanceof Error ? error.message : String(error)}`);
     return kept ? { ...posted, kept } : posted;
   });
   server.handle(handoffReview, ({ runId, to, note, sendDraft }, { paseo: api }) => {

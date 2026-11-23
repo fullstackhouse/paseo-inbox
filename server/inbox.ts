@@ -313,7 +313,8 @@ export class Inbox {
   /**
    * After a post, when the human asked for it: archives that run's own workspace. Not while an agent
    * there works or waits on a permission prompt, since archiving would stop it. Returns why it kept
-   * the workspace, or null.
+   * the workspace, or null once the archive has started. Like Dismiss, it doesn't wait for the
+   * archive: removing a worktree is slow, and the review is already on GitHub.
    */
   async archiveRun(runId: string): Promise<string | null> {
     const workspaceId = this.run(runId)?.workspaceId;
@@ -321,7 +322,7 @@ export class Inbox {
     const status = await this.deps.workspaceStatus?.(workspaceId);
     if (status === null) return null;
     if (status === "running" || status === "needs_input") return "an agent there is still working";
-    await this.deps.archive(workspaceId);
+    void this.deps.archive(workspaceId).catch((error) => console.error("archive failed", workspaceId, error));
     return null;
   }
 
