@@ -190,7 +190,7 @@ export function InboxScreen({ theme, layout, navigation }: PluginScreenProps) {
     const running = run.state === "running";
     const ended = doneStatus(run);
     const failure = failureStatus(run);
-    const detail = draft ? draft.detail : ended ? (ended.detail ?? run.rule) : failure ? (failure.detail ?? run.rule) : running ? runningDetail(run, view) : clone ? `Found a clone at ${clone}` : run.state === "no-checkout" && pr ? `No clone of ${pr.repo} on this machine. Add one under Settings → Inbox → Repos on this machine.` : (run.reason ?? run.rule);
+    const detail = draft ? draft.detail : ended ? (ended.detail ?? run.rule) : running ? runningDetail(run, view) : clone ? `Found a clone at ${clone}` : run.state === "no-checkout" && pr ? `No clone of ${pr.repo} on this machine. Add one under Settings → Inbox → Repos on this machine.` : (run.reason ?? run.rule);
     const checked = picked.has(run.id);
     const canRun = run.state !== "running" && run.state !== "queued" && run.state !== "no-checkout";
     const canDismiss = run.state !== "running" && run.state !== "done";
@@ -248,7 +248,10 @@ export function InboxScreen({ theme, layout, navigation }: PluginScreenProps) {
         {failure ? (
           <View style={{ flexDirection: "row", alignItems: "flex-start", gap: 8, flexWrap: "wrap" }}>
             <Pill theme={theme} color={toneColor(theme, failure.tone)} outlined={failure.tone === "muted"}>{failure.label}</Pill>
-            <FailureText theme={theme} color={toneColor(theme, failure.tone)} text={detail} expanded={expanded.has(run.id)} onToggle={() => setExpanded((ids) => (ids.has(run.id) ? new Set([...ids].filter((id) => id !== run.id)) : new Set([...ids, run.id])))} />
+            {/* No reason: the pill alone. The rule name in its colour would read as the error. */}
+            {failure.detail ? (
+              <FailureText theme={theme} color={toneColor(theme, failure.tone)} text={failure.detail} expanded={expanded.has(run.id)} onToggle={() => setExpanded((ids) => (ids.has(run.id) ? new Set([...ids].filter((id) => id !== run.id)) : new Set([...ids, run.id])))} />
+            ) : null}
           </View>
         ) : null}
         {(clone && pr) || canRun || canDismiss ? (
