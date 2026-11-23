@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { Inbox, type InboxDeps, type StartRequest } from "../server/inbox";
-import { type Pr, type State } from "../shared/inbox";
+import { runId, type Pr, type State } from "../shared/inbox";
 import { config, emptyState, later, NOW, pr } from "./fixtures";
 
 function harness(results: Record<string, Pr[]> = {}, overrides: Partial<InboxDeps> = {}) {
@@ -223,6 +223,18 @@ describe("Inbox", () => {
     await inbox.poll();
     expect(saved().runs.find((run) => run.rule === "fix-ci")).toMatchObject({ state: "done", reason: "dismissed" });
     await expect(inbox.skip("acme/shop#7", "draft-review")).rejects.toThrow("It's running");
+  });
+
+  it("Run now on a repo with no clone here waits for one instead of failing", async () => {
+    const other = pr({ repo: "acme/api" });
+    const state: State = {
+      items: { [other.key]: { pr: other, sources: ["review"], lastSeenAt: NOW } },
+      runs: [{ id: runId(other.key, "draft-review", other.headSha), itemKey: other.key, source: "review", rule: "draft-review", version: other.headSha, state: "failed", reason: "no checkout", updatedAt: NOW }],
+    };
+    const { inbox, started, saved } = harness({}, { load: () => state });
+    await inbox.runNow(other.key, "draft-review");
+    expect(started).toEqual([]);
+    expect(saved().runs).toMatchObject([{ state: "no-checkout", reason: "no clone of acme/api on this machine" }]);
   });
 
   it("Dismiss archives the workspaces of that item's runs", async () => {
