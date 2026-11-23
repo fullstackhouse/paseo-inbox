@@ -2,6 +2,7 @@ import { fetchPrDeployments, fetchPrUpstream } from "./server/upstream";
 import { getPrDeployments, getPrUpstream, previewPrDeployments, previewPrUpstream } from "./shared/upstream";
 import type { PaseoApi, PaseoWorkspaceHandle } from "@getpaseo/client";
 import type { PluginServerContext } from "@getpaseo/plugin/server";
+import { fetchAvatar } from "./server/avatar";
 import { installBridge } from "./server/bridge";
 import { openInBrowser } from "./server/open";
 import { mkdirSync } from "node:fs";
@@ -100,6 +101,28 @@ export function prWorktree(pr: { repo: string; number: number }): { mode: "check
   return { mode: "checkout-pr", prNumber: pr.number, projectPath: pr.repo };
 }
 
+type AppearanceHandle = PaseoWorkspaceHandle & {
+  setAppearance?: (appearance: { avatar: string | null; titleIcon: string | null }) => Promise<unknown>;
+};
+
+/**
+ * Sets the review workspace apart from the human's own in the sidebar: the PR author's avatar in
+ * place of the project icon, and an inbox icon before the PR title. Only FSH Paseo has
+ * `setAppearance` (`features.workspaceAppearance`); elsewhere the row stays plain. A missing avatar
+ * still marks the row with the icon.
+ */
+async function markReviewWorkspace(paseo: PaseoApi, workspaceId: string, pr: { url: string; author: string }): Promise<void> {
+  const workspace = paseo.workspaces.ref(workspaceId) as AppearanceHandle;
+  if (!workspace.setAppearance) return;
+  const avatar = pr.author
+    ? await fetchAvatar(pr.url, pr.author).catch((error) => {
+        console.error("avatar fetch failed", error);
+        return null;
+      })
+    : null;
+  await workspace.setAppearance({ avatar, titleIcon: "Inbox" });
+}
+
 export default function contribute(server: PluginServerContext) {
   const dir = dataDir();
   const store = new StateStore(dir);
@@ -154,13 +177,16 @@ export default function contribute(server: PluginServerContext) {
       cwd,
       worktree: prWorktree(pr),
       background: true,
-      title: `Inbox · ${run.rule} · ${pr.repo}#${pr.number}${trusted ? "" : " · read-only"}`,
+      title: pr.title,
       config: { provider, modeId: trusted ? mode : "default" },
       labels: { [RUN_LABEL]: run.id, [PR_LABEL]: pr.url },
       env: { [RUN_ENV]: run.id, ...(trusted ? {} : { [UNTRUSTED_ENV]: "1" }) },
       prompt: trusted ? prompt : `${prompt}\n\nThis run is read-only: ${pr.author ? `@${pr.author}` : "the author"} isn't on your trust list, so you can read files and use the inbox tools but can't run commands.`,
     });
     await created.refresh().catch(() => null);
+    if (created.workspaceId !== null) {
+      await markReviewWorkspace(paseo, created.workspaceId, pr).catch((error) => console.error("marking the review workspace failed", error));
+    }
     return { agentId: created.id, workspaceId: created.workspaceId };
   };
 
