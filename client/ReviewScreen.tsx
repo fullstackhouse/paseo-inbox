@@ -944,16 +944,17 @@ export function ReviewScreen({ theme, layout, navigation, params, setTitle }: Pl
               <Chip theme={theme} label="Hand off" active={handingOff} disabled={Boolean(busy) || !run.agentId} style={small} textStyle={{ fontSize: 12 }} onPress={() => setHandingOff(!handingOff)} />
               <Chip theme={theme} label={busy === "done" ? "…" : next ? "Dismiss, next" : "Dismiss"} disabled={Boolean(busy)} style={small} textStyle={{ fontSize: 12 }} onPress={() => void done()} />
             </View>
+            {/* Its own row: beside the Post button it squeezes the comment count in a narrow Explorer sidebar. */}
+            {run.workspaceId ? (
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                <Switch value={archiveAfter} disabled={Boolean(busy)} onValueChange={setArchiveAfter} accessibilityLabel="Archive the workspace after posting" />
+                <Text style={muted}>Archive the workspace after posting</Text>
+              </View>
+            ) : null}
             <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
               <Text style={{ ...muted, flex: 1 }} numberOfLines={2}>
                 {stale ? `Posts on ${draft.version.slice(0, 7)}, where it was drafted; GitHub marks comments outdated where the code changed since. ` : ""}{`${live.length} comment${live.length === 1 ? "" : "s"}${folded ? ` (${folded} in the body)` : ""}${draft.comments.length > live.length ? ` · ${draft.comments.length - live.length} dropped` : ""}`}
               </Text>
-              {run.workspaceId ? (
-                <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-                  <Switch value={archiveAfter} disabled={Boolean(busy)} onValueChange={setArchiveAfter} accessibilityLabel="Archive the workspace after posting" />
-                  <Text style={muted}>Archive workspace</Text>
-                </View>
-              ) : null}
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel={`Post the review to GitHub as ${verdict}`}
