@@ -6,7 +6,7 @@ import { Deployments } from "./Deployments";
 import { usePrTabTitle } from "./prTabTitle";
 import { GitHubTab } from "./GitHubTab";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, Platform, Pressable, ScrollView, Text, View } from "react-native";
+import { ActivityIndicator, Platform, Pressable, ScrollView, Switch, Text, View } from "react-native";
 import { fileAt, nextUnviewed, stepFile } from "../shared/filetree";
 import { addPr, DISMISSED, parsePrRef, restoreRun, reviewRunFor, runNow, skipRun, type Run } from "../shared/inbox";
 import {
@@ -108,6 +108,8 @@ export function ReviewScreen({ theme, layout, navigation, params, setTitle }: Pl
   const [since, setSince] = useState<Since | null>(null);
   const [sinceOpen, setSinceOpen] = useState<Set<string>>(new Set());
   const [handingOff, setHandingOff] = useState(false);
+  // Most reviews end with the post, so its workspace goes too unless the human switches this off.
+  const [archiveAfter, setArchiveAfter] = useState(true);
   const [askingSummary, setAskingSummary] = useState(false);
   const openUrl = useOpenUrl();
 
@@ -338,10 +340,10 @@ export function ReviewScreen({ theme, layout, navigation, params, setTitle }: Pl
   };
   const submit = () =>
     act("post", async (here) => {
-      const result = await post({ runId });
+      const result = await post({ runId, archive: archiveAfter && Boolean(run?.workspaceId) });
       if (!here()) return;
       setDraft((current) => (current ? { ...current, postedUrl: result.url, postedVerdict: effectiveVerdict(current) } : current));
-      setNotice(`Posted: ${result.inline} inline${result.folded ? `, ${result.folded} in the review body` : ""}.`);
+      setNotice(`Posted: ${result.inline} inline${result.folded ? `, ${result.folded} in the review body` : ""}.${result.kept ? ` Kept the workspace: ${result.kept}.` : ""}`);
     });
   // Moves on at once; the dismiss finishes in the background.
   const done = () =>
@@ -946,6 +948,12 @@ export function ReviewScreen({ theme, layout, navigation, params, setTitle }: Pl
               <Text style={{ ...muted, flex: 1 }} numberOfLines={2}>
                 {stale ? `Posts on ${draft.version.slice(0, 7)}, where it was drafted; GitHub marks comments outdated where the code changed since. ` : ""}{`${live.length} comment${live.length === 1 ? "" : "s"}${folded ? ` (${folded} in the body)` : ""}${draft.comments.length > live.length ? ` · ${draft.comments.length - live.length} dropped` : ""}`}
               </Text>
+              {run.workspaceId ? (
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                  <Switch value={archiveAfter} disabled={Boolean(busy)} onValueChange={setArchiveAfter} accessibilityLabel="Archive the workspace after posting" />
+                  <Text style={muted}>Archive workspace</Text>
+                </View>
+              ) : null}
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel={`Post the review to GitHub as ${verdict}`}

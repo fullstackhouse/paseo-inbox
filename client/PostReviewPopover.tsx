@@ -1,7 +1,7 @@
 import type { PluginTheme } from "@getpaseo/plugin";
 import type { PluginButtonContentProps } from "@getpaseo/plugin/client";
 import { useEffect, useMemo, useState, useSyncExternalStore, type ComponentType } from "react";
-import { ActivityIndicator, Pressable, Text, View } from "react-native";
+import { ActivityIndicator, Pressable, Switch, Text, View } from "react-native";
 import { effectiveVerdict, postSummary, verdictMismatch, type PostSummary, type PrFile, type ReviewDraft } from "../shared/review";
 import { Chip, verdictColor } from "./ui";
 
@@ -15,7 +15,8 @@ export interface PostStore {
   draft(runId: string): Promise<ReviewDraft | null>;
   /** The PR's changed files at `version` with their patches, to tell which comments can sit on a line. */
   files(itemKey: string, version: string): Promise<readonly PrFile[]>;
-  post(runId: string): Promise<void>;
+  /** With `archive`, the run's workspace goes too; resolves to why it was kept, or null. */
+  post(runId: string, archive: boolean): Promise<string | null>;
 }
 
 type Loaded = {
@@ -49,6 +50,9 @@ export function makePostPopover(store: PostStore): ComponentType<PluginButtonCon
     const [loaded, setLoaded] = useState<Loaded | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [posting, setPosting] = useState(false);
+    // Most reviews end here, so archiving is the default; switch it off to keep talking to the reviewer.
+    const [archive, setArchive] = useState(true);
+    const [kept, setKept] = useState<string | null>(null);
 
     useEffect(() => {
       if (!target) return;
@@ -68,6 +72,8 @@ export function makePostPopover(store: PostStore): ComponentType<PluginButtonCon
       };
     }, [target]);
 
+    // Posted, but the workspace stayed: the pill no longer offers Post, so say it here before the target goes.
+    if (kept) return <Text style={styles.warning}>Posted. Kept the workspace: {kept}.</Text>;
     if (!target) return <Text style={styles.muted}>Nothing to post.</Text>;
     if (error && !loaded) return <Text style={styles.danger}>{error}</Text>;
     if (!loaded) return <ActivityIndicator color={props.theme.colors.foregroundMuted} />;
@@ -80,8 +86,9 @@ export function makePostPopover(store: PostStore): ComponentType<PluginButtonCon
       setPosting(true);
       setError(null);
       try {
-        await store.post(target.runId);
-        props.close();
+        const reason = await store.post(target.runId, archive);
+        if (reason) setKept(reason);
+        else props.close();
       } catch (caught) {
         setError(message(caught));
         setPosting(false);
@@ -108,6 +115,10 @@ export function makePostPopover(store: PostStore): ComponentType<PluginButtonCon
         {mismatch ? <Text style={styles.warning}>{mismatch}.</Text> : null}
         {error ? <Text style={styles.danger}>{error}</Text> : null}
         <Text style={styles.muted}>To change the verdict or the comments, open the review.</Text>
+        <View style={styles.archive}>
+          <Switch value={archive} disabled={posting} onValueChange={setArchive} accessibilityLabel="Archive the workspace after posting" />
+          <Text style={styles.archiveLabel}>Archive the workspace after posting</Text>
+        </View>
         <View style={styles.actions}>
           <Chip theme={props.theme} label="Cancel" disabled={posting} onPress={props.close} />
           <Pressable
@@ -134,6 +145,8 @@ function makeStyles(theme: PluginTheme, compact: boolean) {
     muted: { color: colors.foregroundMuted, fontSize: 12 },
     warning: { color: colors.statusWarning, fontSize: 12 },
     danger: { color: colors.statusDanger, fontSize: 12 },
+    archive: { flexDirection: "row" as const, alignItems: "center" as const, gap: 8 },
+    archiveLabel: { color: colors.foreground, fontSize: 13, flex: 1 },
     actions: { flexDirection: "row" as const, justifyContent: "flex-end" as const, alignItems: "center" as const, gap: 8, marginTop: 4 },
     post: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 8 },
     postText: { color: colors.accentForeground, fontWeight: "600" as const, fontSize: 13 },
