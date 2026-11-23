@@ -163,11 +163,15 @@ export function doneStatus(run: Run): { label: string; tone: DoneTone; detail: s
 
 export const START_FAILED = "could not start the agent: ";
 
-/** A failed run's pill: no agent means it never started. The detail drops what the pill says. */
-export function failureStatus(run: Run): { label: string; detail: string | null } | null {
+export const CANCELED = "canceled: ";
+
+/** A failed run's pill: no agent means it never started; a canceled turn isn't a crash. The detail drops what the pill says. */
+export function failureStatus(run: Run): { label: string; tone: DoneTone; detail: string | null } | null {
   if (run.state !== "failed") return null;
-  const reason = run.reason?.startsWith(START_FAILED) ? run.reason.slice(START_FAILED.length) : run.reason;
-  return { label: run.agentId ? "Agent failed" : "Didn't start", detail: reason || null };
+  const reason = run.reason ?? "";
+  if (reason.startsWith(CANCELED)) return { label: "Canceled", tone: "muted", detail: reason.slice(CANCELED.length) || null };
+  const detail = reason.startsWith(START_FAILED) ? reason.slice(START_FAILED.length) : reason;
+  return { label: run.agentId ? "Agent failed" : "Didn't start", tone: "danger", detail: detail || null };
 }
 
 /** Why a run waits: the repo has no entry under Settings → Inbox → Repos on this machine. */
@@ -267,7 +271,8 @@ export function plan({ config, results, state, now }: PlanInput): State {
       else if (dismissed(earlier)) next = null;
       else if (rule.rerun === "once" && earlier.some((run) => !REDECIDED.has(run.state))) next = null;
       // A manual rule's match waits in view for Run now; "skipped" is only for PRs no rule matched.
-      else if (rule.rerun === "manual") next = { ...base, state: "manual", reason: "manual rule: use Run now" };
+      // Only Run now makes a manual rule's run no-checkout, so that one keeps waiting for a clone.
+      else if (rule.rerun === "manual" && existing?.state !== "no-checkout") next = { ...base, state: "manual", reason: "manual rule: use Run now" };
       else if (!checkouts.has(pr.repo.toLowerCase())) next = { ...base, state: "no-checkout", reason: noCheckoutReason(pr.repo) };
       else next = { ...base, state: "queued" };
 

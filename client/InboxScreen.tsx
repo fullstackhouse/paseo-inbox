@@ -43,9 +43,9 @@ const FAILURE_LINE = 18;
  * A failure's reason in two lines, with Show more once the whole text runs longer. An invisible copy
  * of the full text measures that. `expanded` lives in the screen: rows remount on every refresh.
  */
-function FailureText({ theme, text, expanded, onToggle }: { theme: PluginScreenProps["theme"]; text: string; expanded: boolean; onToggle: () => void }) {
+function FailureText({ theme, color, text, expanded, onToggle }: { theme: PluginScreenProps["theme"]; color: string; text: string; expanded: boolean; onToggle: () => void }) {
   const [fullHeight, setFullHeight] = useState(0);
-  const style = { color: theme.colors.statusDanger, fontSize: 13, lineHeight: FAILURE_LINE };
+  const style = { color, fontSize: 13, lineHeight: FAILURE_LINE };
   return (
     <View style={{ flexGrow: 1, flexShrink: 1, flexBasis: 220, minWidth: 0, alignItems: "flex-start" }}>
       <Text style={{ ...style, alignSelf: "stretch" }} numberOfLines={expanded ? undefined : 2}>
@@ -247,8 +247,8 @@ export function InboxScreen({ theme, layout, navigation }: PluginScreenProps) {
         {/* Outside the open button: Show more is a control of its own. */}
         {failure ? (
           <View style={{ flexDirection: "row", alignItems: "flex-start", gap: 8, flexWrap: "wrap" }}>
-            <Pill theme={theme} color={theme.colors.statusDanger}>{failure.label}</Pill>
-            <FailureText theme={theme} text={detail} expanded={expanded.has(run.id)} onToggle={() => setExpanded((ids) => (ids.has(run.id) ? new Set([...ids].filter((id) => id !== run.id)) : new Set([...ids, run.id])))} />
+            <Pill theme={theme} color={toneColor(theme, failure.tone)} outlined={failure.tone === "muted"}>{failure.label}</Pill>
+            <FailureText theme={theme} color={toneColor(theme, failure.tone)} text={detail} expanded={expanded.has(run.id)} onToggle={() => setExpanded((ids) => (ids.has(run.id) ? new Set([...ids].filter((id) => id !== run.id)) : new Set([...ids, run.id])))} />
           </View>
         ) : null}
         {(clone && pr) || canRun || canDismiss ? (

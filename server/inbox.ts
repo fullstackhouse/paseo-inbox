@@ -1,4 +1,4 @@
-import { DISMISSED, START_FAILED, draftsReviews, explainedReason, unexplained, type PrOutcome, latestRound, modeFor, moveRun, noCheckoutReason, plan, renderPrompt, providerFor, reopen, reopenable, requeue, runId, setRun, startable, type Config, type InboxView, type Pr, type Run, type State } from "../shared/inbox";
+import { CANCELED, DISMISSED, START_FAILED, draftsReviews, explainedReason, unexplained, type PrOutcome, latestRound, modeFor, moveRun, noCheckoutReason, plan, renderPrompt, providerFor, reopen, reopenable, requeue, runId, setRun, startable, type Config, type InboxView, type Pr, type Run, type State } from "../shared/inbox";
 import { askedAgain, type ReviewRequest } from "../shared/rereview";
 import type { Verdict } from "../shared/review";
 
@@ -251,7 +251,7 @@ export class Inbox {
     const patch: Partial<Run> =
       outcome.kind === "completed"
         ? { state: "needs-decision" }
-        : { state: "failed", reason: outcome.kind === "failed" ? outcome.error.message : `canceled: ${outcome.reason}` };
+        : { state: "failed", reason: outcome.kind === "failed" ? outcome.error.message : `${CANCELED}${outcome.reason}` };
     this.commit(setRun(this.state, run.id, patch, this.now()));
     const ended = this.state.runs.find((candidate) => candidate.id === run.id);
     if (ended && outcome.kind !== "canceled") void this.deps.ended?.(ended).catch(() => undefined);

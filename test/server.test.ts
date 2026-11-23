@@ -237,6 +237,19 @@ describe("Inbox", () => {
     expect(saved().runs).toMatchObject([{ state: "no-checkout", reason: "no clone of acme/api on this machine" }]);
   });
 
+  it("a queued run whose clone went before it started waits for one instead of failing", async () => {
+    let current = config();
+    let ready = false;
+    const { inbox, started, saved } = harness({ review: [pr()] }, { loadConfig: () => current, ready: () => ready });
+    await inbox.poll();
+    expect(saved().runs[0]!.state).toBe("queued");
+    current = config({ checkouts: {} });
+    ready = true;
+    await inbox.poll();
+    expect(started).toEqual([]);
+    expect(saved().runs[0]).toMatchObject({ state: "no-checkout", reason: "no clone of acme/shop on this machine" });
+  });
+
   it("Dismiss archives the workspaces of that item's runs", async () => {
     const archived: string[] = [];
     const { inbox } = harness({ review: [pr()] }, { archive: async (id) => void archived.push(id) });
