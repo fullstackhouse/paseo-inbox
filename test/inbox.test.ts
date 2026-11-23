@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ConfigSchema, DISMISSED, doneStatus, draftsReviews, explainedReason, globToRegExp, groupRuns, isMine, listedRuns, runsFor, whoseCounts, matchesQuery, mismatch, needsDecisionCount, opensReview, plan, renderPrompt, requeue, reviewPill, reviewRunFor, runId, runningDetail, setRun, startable, type Run } from "../shared/inbox";
+import { ConfigSchema, DISMISSED, doneStatus, failureStatus, draftsReviews, explainedReason, globToRegExp, groupRuns, isMine, listedRuns, runsFor, whoseCounts, matchesQuery, mismatch, needsDecisionCount, opensReview, plan, renderPrompt, requeue, reviewPill, reviewRunFor, runId, runningDetail, setRun, startable, type Run } from "../shared/inbox";
 import { config, emptyState, later, NOW, pr } from "./fixtures";
 
 const states = (state: ReturnType<typeof plan>) => state.runs.map((run) => [run.rule, run.version, run.state]);
@@ -203,6 +203,19 @@ describe("requeue", () => {
     expect(() => requeue(state, config(), "acme/shop#7", "draft-review", later(3))).toThrow("Already running");
     expect(() => requeue(state, config(), "acme/shop#7", "nope", later(3))).toThrow("Unknown rule nope");
   });
+
+  it("keeps a manual rule's Run now waiting for a clone across polls, and queues it once there is one", () => {
+    const manual = config({ rules: [{ name: "self-review", source: "review", rerun: "manual", prompt: "Review {{pr.url}}" }] });
+    const other = pr({ repo: "acme/api" });
+    let state = plan({ config: manual, results: { review: [other] }, state: emptyState(), now: NOW });
+    expect(state.runs[0]!.state).toBe("manual");
+    state = requeue(state, manual, other.key, "self-review", later(1));
+    state = plan({ config: manual, results: { review: [other] }, state, now: later(2) });
+    expect(state.runs[0]).toMatchObject({ state: "no-checkout", reason: "no clone of acme/api on this machine" });
+    const cloned = config({ ...manual, checkouts: { "acme/api": "/src/api" } });
+    state = plan({ config: cloned, results: { review: [other] }, state, now: later(3) });
+    expect(state.runs[0]!.state).toBe("queued");
+  });
 });
 
 describe("renderPrompt", () => {
@@ -365,6 +378,20 @@ describe("reviewRunFor", () => {
     expect(reviewRunFor(runs, view, "acme/shop#7")).toBeNull();
     expect(reviewRunFor(runs, view, "acme/shop#9")).toBeNull();
     expect(reviewRunFor(runs, view, "not a pr")).toBeNull();
+  });
+});
+
+describe("failureStatus", () => {
+  const failed = (patch: Partial<Run>): Run => ({ id: "r", itemKey: "acme/shop#7", source: "review", rule: "review", version: "abc", state: "failed", updatedAt: NOW, ...patch });
+  it("says whether the agent never started or failed later, without repeating that in the detail", () => {
+    expect(failureStatus(failed({ reason: "could not start the agent: checkout-pr failed" }))).toEqual({ label: "Didn't start", tone: "danger", detail: "checkout-pr failed" });
+    expect(failureStatus(failed({ reason: "rule removed from inbox.json" }))).toEqual({ label: "Didn't start", tone: "danger", detail: "rule removed from inbox.json" });
+    expect(failureStatus(failed({ agentId: "a", reason: "agent closed before it finished" }))).toEqual({ label: "Agent failed", tone: "danger", detail: "agent closed before it finished" });
+    expect(failureStatus(failed({ agentId: "a" }))).toEqual({ label: "Agent failed", tone: "danger", detail: null });
+    expect(failureStatus(failed({ agentId: "a", reason: "canceled: stopped by the user" }))).toEqual({ label: "Canceled", tone: "muted", detail: "stopped by the user" });
+  });
+  it("is null for runs that didn't fail", () => {
+    expect(failureStatus(failed({ state: "done" }))).toBeNull();
   });
 });
 

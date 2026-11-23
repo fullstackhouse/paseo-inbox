@@ -2,7 +2,7 @@ import type { PluginScreenProps } from "@getpaseo/plugin/client";
 import { useRpc, useSettings } from "@getpaseo/plugin/client";
 import { useEffect, useMemo, useState } from "react";
 import { ActivityIndicator, Pressable, ScrollView, Text, TextInput, View } from "react-native";
-import { addCheckout, addPr, doneStatus, findCheckout, type DoneTone, groupRuns, isMine, isUnconfigured, listedRuns, matchesQuery, SETTLED_STATES, whoseCounts, type Whose, opensReview, parsePrRef, runNow, runningDetail, skipRun, type Run, type RunState } from "../shared/inbox";
+import { addCheckout, addPr, doneStatus, failureStatus, findCheckout, type DoneTone, groupRuns, isMine, isUnconfigured, listedRuns, matchesQuery, SETTLED_STATES, whoseCounts, type Whose, opensReview, parsePrRef, runNow, runningDetail, skipRun, type Run, type RunState } from "../shared/inbox";
 import { postReview } from "../shared/review";
 import { inboxSettings } from "../shared/settings";
 import { openScreen } from "./nav";
@@ -37,6 +37,32 @@ const postable = (run: Run) => run.state === "needs-decision" && drafted(run) !=
 const toneColor = (theme: PluginScreenProps["theme"], tone: DoneTone) =>
   tone === "success" ? theme.colors.statusSuccess : tone === "danger" ? theme.colors.statusDanger : theme.colors.foregroundMuted;
 
+const FAILURE_LINE = 18;
+
+/**
+ * A failure's reason in two lines, with Show more once the whole text runs longer. An invisible copy
+ * of the full text measures that. `expanded` lives in the screen: rows remount on every refresh.
+ */
+function FailureText({ theme, color, text, expanded, onToggle }: { theme: PluginScreenProps["theme"]; color: string; text: string; expanded: boolean; onToggle: () => void }) {
+  const [fullHeight, setFullHeight] = useState(0);
+  const style = { color, fontSize: 13, lineHeight: FAILURE_LINE };
+  return (
+    <View style={{ flexGrow: 1, flexShrink: 1, flexBasis: 220, minWidth: 0, alignItems: "flex-start" }}>
+      <Text style={{ ...style, alignSelf: "stretch" }} numberOfLines={expanded ? undefined : 2}>
+        {text}
+      </Text>
+      <Text aria-hidden style={{ ...style, position: "absolute", left: 0, right: 0, opacity: 0, pointerEvents: "none" }} onLayout={(event) => setFullHeight(event.nativeEvent.layout.height)}>
+        {text}
+      </Text>
+      {fullHeight > FAILURE_LINE * 2 + 1 ? (
+        <Pressable accessibilityRole="button" hitSlop={6} onPress={onToggle}>
+          <Text style={{ color: theme.colors.foregroundMuted, fontSize: 12, fontWeight: "600", marginTop: 2 }}>{expanded ? "Show less" : "Show more"}</Text>
+        </Pressable>
+      ) : null}
+    </View>
+  );
+}
+
 export function InboxScreen({ theme, layout, navigation }: PluginScreenProps) {
   const { view, error, polling, refresh, pollNow } = useInbox();
   const rerun = useRpc(runNow);
@@ -50,6 +76,7 @@ export function InboxScreen({ theme, layout, navigation }: PluginScreenProps) {
   const [clones, setClones] = useState<Record<string, string | null>>({});
   const post = useRpc(postReview);
   const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [posting, setPosting] = useState<string | null>(null);
   const [link, setLink] = useState("");
   const [adding, setAdding] = useState(false);
@@ -162,6 +189,7 @@ export function InboxScreen({ theme, layout, navigation }: PluginScreenProps) {
     const clone = run.state === "no-checkout" && pr ? clones[pr.repo] : undefined;
     const running = run.state === "running";
     const ended = doneStatus(run);
+    const failure = failureStatus(run);
     const detail = draft ? draft.detail : ended ? (ended.detail ?? run.rule) : running ? runningDetail(run, view) : clone ? `Found a clone at ${clone}` : run.state === "no-checkout" && pr ? `No clone of ${pr.repo} on this machine. Add one under Settings → Inbox → Repos on this machine.` : (run.reason ?? run.rule);
     const checked = picked.has(run.id);
     const canRun = run.state !== "running" && run.state !== "queued" && run.state !== "no-checkout";
@@ -204,16 +232,28 @@ export function InboxScreen({ theme, layout, navigation }: PluginScreenProps) {
             <Text style={{ color: theme.colors.foreground, fontSize: 15, fontWeight: "500", lineHeight: 20 }} numberOfLines={2}>
               {pr?.title ?? run.itemKey}
             </Text>
-            <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-              {draft ? <Pill theme={theme} color={verdictColor(theme, draft.verdict)}>{draft.verdict}</Pill> : null}
-              {ended ? <Pill theme={theme} color={toneColor(theme, ended.tone)} outlined={ended.tone === "muted"}>{ended.label}</Pill> : null}
-              {running ? <ActivityIndicator size="small" color={theme.colors.foregroundMuted} accessibilityLabel="Running" /> : null}
-              <Text style={{ ...muted, flex: 1 }} numberOfLines={2}>
-                {detail}
-              </Text>
-            </View>
+            {failure ? null : (
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                {draft ? <Pill theme={theme} color={verdictColor(theme, draft.verdict)}>{draft.verdict}</Pill> : null}
+                {ended ? <Pill theme={theme} color={toneColor(theme, ended.tone)} outlined={ended.tone === "muted"}>{ended.label}</Pill> : null}
+                {running ? <ActivityIndicator size="small" color={theme.colors.foregroundMuted} accessibilityLabel="Running" /> : null}
+                <Text style={{ ...muted, flex: 1 }} numberOfLines={2}>
+                  {detail}
+                </Text>
+              </View>
+            )}
           </Pressable>
         </View>
+        {/* Outside the open button: Show more is a control of its own. */}
+        {failure ? (
+          <View style={{ flexDirection: "row", alignItems: "flex-start", gap: 8, flexWrap: "wrap" }}>
+            <Pill theme={theme} color={toneColor(theme, failure.tone)} outlined={failure.tone === "muted"}>{failure.label}</Pill>
+            {/* No reason: the pill alone. The rule name in its colour would read as the error. */}
+            {failure.detail ? (
+              <FailureText theme={theme} color={toneColor(theme, failure.tone)} text={failure.detail} expanded={expanded.has(run.id)} onToggle={() => setExpanded((ids) => (ids.has(run.id) ? new Set([...ids].filter((id) => id !== run.id)) : new Set([...ids, run.id])))} />
+            ) : null}
+          </View>
+        ) : null}
         {(clone && pr) || canRun || canDismiss ? (
           <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: 8, flexWrap: "wrap" }}>
             {clone && pr ? <Chip theme={theme} label="Use it" active disabled={rowBusy} style={{ paddingVertical: 4, paddingHorizontal: 10 }} textStyle={{ fontSize: 12 }} onPress={() => void adoptClone(key, pr.repo, clone)} /> : null}

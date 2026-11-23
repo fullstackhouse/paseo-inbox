@@ -1,4 +1,4 @@
-import { DISMISSED, draftsReviews, explainedReason, unexplained, type PrOutcome, latestRound, modeFor, moveRun, noCheckoutReason, plan, renderPrompt, providerFor, reopen, reopenable, requeue, runId, setRun, startable, type Config, type InboxView, type Pr, type Run, type State } from "../shared/inbox";
+import { CANCELED, DISMISSED, START_FAILED, draftsReviews, explainedReason, unexplained, type PrOutcome, latestRound, modeFor, moveRun, noCheckoutReason, plan, renderPrompt, providerFor, reopen, reopenable, requeue, runId, setRun, startable, type Config, type InboxView, type Pr, type Run, type State } from "../shared/inbox";
 import { askedAgain, type ReviewRequest } from "../shared/rereview";
 import type { Verdict } from "../shared/review";
 
@@ -222,7 +222,9 @@ export class Inbox {
       const rule = config.rules.find((candidate) => candidate.name === run.rule);
       const cwd = pr && Object.entries(config.checkouts).find(([repo]) => repo.toLowerCase() === pr.repo.toLowerCase())?.[1];
       if (!pr || !rule || !cwd) {
-        this.commit(setRun(this.state, run.id, { state: "failed", reason: !rule ? "rule removed from inbox.json" : "no checkout" }, this.now()));
+        // The clone can go between queueing and dispatch; it waits for one again, like a fresh run.
+        const patch: Partial<Run> = !rule ? { state: "failed", reason: "rule removed from inbox.json" } : !pr ? { state: "failed", reason: "PR no longer in the inbox" } : { state: "no-checkout", reason: noCheckoutReason(pr.repo) };
+        this.commit(setRun(this.state, run.id, patch, this.now()));
         continue;
       }
       this.commit(setRun(this.state, run.id, { state: "running", reason: undefined }, this.now()));
@@ -235,7 +237,7 @@ export class Inbox {
         const limited = /rate limit/i.test(message(error));
         const patch: Partial<Run> = limited
           ? { state: "queued", reason: "GitHub rate limit; retrying on the next poll" }
-          : { state: "failed", reason: `could not start the agent: ${message(error)}` };
+          : { state: "failed", reason: `${START_FAILED}${message(error)}` };
         this.commit(setRun(this.state, run.id, patch, this.now()));
         if (limited) break;
       }
@@ -249,7 +251,7 @@ export class Inbox {
     const patch: Partial<Run> =
       outcome.kind === "completed"
         ? { state: "needs-decision" }
-        : { state: "failed", reason: outcome.kind === "failed" ? outcome.error.message : `canceled: ${outcome.reason}` };
+        : { state: "failed", reason: outcome.kind === "failed" ? outcome.error.message : `${CANCELED}${outcome.reason}` };
     this.commit(setRun(this.state, run.id, patch, this.now()));
     const ended = this.state.runs.find((candidate) => candidate.id === run.id);
     if (ended && outcome.kind !== "canceled") void this.deps.ended?.(ended).catch(() => undefined);
@@ -351,8 +353,6 @@ export class Inbox {
     const id = this.state.runs.find((run) => run.itemKey === pr.key && run.rule === rule.name && run.version === pr.headSha)!.id;
     // Under "manual", so a poll of the rule's own source never closes it for being absent there.
     this.commit(setRun(this.state, id, { source: "manual" }, now));
-    const checkout = Object.keys(config.checkouts).some((repo) => repo.toLowerCase() === pr.repo.toLowerCase());
-    if (!checkout) this.commit(setRun(this.state, id, { state: "no-checkout", reason: noCheckoutReason(pr.repo) }, now));
     await this.dispatch(config);
     return this.run(id)!;
   }
