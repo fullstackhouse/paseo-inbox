@@ -19,7 +19,7 @@ Paseo shows an **Inbox** row in the sidebar, with the number of runs waiting on 
 
 ## Configure
 
-**Settings → Plugins → paseo-inbox → Inbox** (or "Inbox settings" in the Command Center). The settings live in Paseo's own store on the host:
+**Settings → Plugins → paseo-inbox → Settings** (or "Inbox settings" in the Command Center). The settings live in Paseo's own store on the host:
 - **Running**, how often to check GitHub, how many reviewers run at once, the model, and the mode.
 - **Trust** rules.
 - Local checkouts, one per line.
