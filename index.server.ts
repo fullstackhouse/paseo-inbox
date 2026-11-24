@@ -184,8 +184,10 @@ export default function contribute(server: PluginServerContext) {
       prompt: trusted ? prompt : `${prompt}\n\nThis run is read-only: ${pr.author ? `@${pr.author}` : "the author"} isn't on your trust list, so you can read files and use the inbox tools but can't run commands.`,
     });
     await created.refresh().catch(() => null);
+    // Not awaited: the agent's turn is already running, and the run only learns its agent id once
+    // this returns. A stalled avatar download must not let a quick turn end unnoticed.
     if (created.workspaceId !== null) {
-      await markReviewWorkspace(paseo, created.workspaceId, pr).catch((error) => console.error("marking the review workspace failed", error));
+      void markReviewWorkspace(paseo, created.workspaceId, pr).catch((error) => console.error("marking the review workspace failed", error));
     }
     return { agentId: created.id, workspaceId: created.workspaceId };
   };
