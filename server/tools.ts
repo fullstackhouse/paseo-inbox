@@ -40,18 +40,20 @@ export async function callTool(
   try {
     const run = agentId ? inbox.runForAgent(agentId) : null;
     if (!run) throw new Error("Only agents started by paseo-inbox can use the inbox tools");
+    const pr = inbox.item(run.itemKey)?.pr;
     if (name === PR_TOOL) {
-      const pr = inbox.item(run.itemKey)?.pr;
       if (!pr || !details) throw new Error("The PR isn't available");
       return { text: prContext(pr, await details(pr.repo, pr.number)) };
     }
     const previous = reviews.get(run.id);
-    const repo = inbox.item(run.itemKey)?.pr.repo;
+    const repo = pr?.repo;
+    // The row and the notification read this reason: on your own PR it says comment, as it posts.
+    const own = pr ? inbox.ownPr(pr) : false;
     if (name === REVIEW_TOOL) {
       const draft = replaceDraft(previous, ReviewInputSchema.parse(args), run, now);
       if (repo) assertQualifiedRefs(draft, repo);
       reviews.save(draft);
-      inbox.markDrafted(run.id, `review drafted: ${draftHeadline(draft)}`);
+      inbox.markDrafted(run.id, `review drafted: ${draftHeadline(draft, own)}`);
       const kept = previous ? draft.comments.filter((comment) => comment.author === "human" || comment.status !== "draft").length : 0;
       return { text: `Saved: ${draftHeadline(draft)}.${kept ? ` Kept ${kept} comment(s) the human wrote or decided on.` : ""} The human reads and posts it from the Inbox; don't post it yourself, and create no ask for it.` };
     }
@@ -60,7 +62,7 @@ export async function callTool(
       const { draft, applied, refused } = reviseDraft(previous, ReviseInputSchema.parse(args));
       if (repo) assertQualifiedRefs(draft, repo);
       reviews.save(draft);
-      inbox.markDrafted(run.id, `review drafted: ${draftHeadline(draft)}`);
+      inbox.markDrafted(run.id, `review drafted: ${draftHeadline(draft, own)}`);
       const lines = [applied.length ? `Applied: ${applied.join(", ")}.` : "Nothing changed.", ...(refused.length ? [`Refused: ${refused.join("; ")}. Those are the human's to change; say so in your reply.`] : [])];
       return { text: lines.join(" "), isError: !applied.length && refused.length > 0 };
     }

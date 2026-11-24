@@ -1,4 +1,4 @@
-import { CANCELED, DISMISSED, START_FAILED, draftsReviews, explainedReason, unexplained, type PrOutcome, latestRound, modeFor, moveRun, noCheckoutReason, plan, renderPrompt, providerFor, reopen, reopenable, requeue, runId, setRun, startable, type Config, type InboxView, type Pr, type Run, type State } from "../shared/inbox";
+import { CANCELED, DISMISSED, START_FAILED, draftsReviews, isMine, explainedReason, unexplained, type PrOutcome, latestRound, modeFor, moveRun, noCheckoutReason, plan, renderPrompt, providerFor, reopen, reopenable, requeue, runId, setRun, startable, type Config, type InboxView, type Pr, type Run, type State } from "../shared/inbox";
 import { askedAgain, type ReviewRequest } from "../shared/rereview";
 import type { Verdict } from "../shared/review";
 
@@ -93,7 +93,8 @@ export class Inbox {
     for (const run of this.state.runs) {
       if (run.state !== "needs-decision") continue;
       const draft = draftOf(run.id);
-      if (draft) postable[run.id] = draft.verdict;
+      const pr = this.state.items[run.itemKey]?.pr;
+      if (draft) postable[run.id] = pr && this.ownPr(pr) ? "comment" : draft.verdict;
     }
     return postable;
   }
@@ -337,6 +338,11 @@ export class Inbox {
 
   item(key: string) {
     return this.state.items[key] ?? null;
+  }
+
+  /** The signed-in user wrote this PR (false while the login isn't known yet). */
+  ownPr(pr: Pr): boolean {
+    return isMine(pr, this.login ?? undefined);
   }
 
   /** Undo Dismiss: the run is back to needs-decision with `reason`, without announcing it again. */

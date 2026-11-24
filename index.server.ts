@@ -407,7 +407,8 @@ export default function contribute(server: PluginServerContext) {
     capture(api);
     const draft = reviews.get(runId);
     if (!draft || draft.postedUrl) throw new Error(draft ? "This review was already posted" : "This run has no review draft");
-    inbox.restore(runId, `review drafted: ${draftHeadline(draft)}`);
+    const pr = inbox.item(draft.itemKey)?.pr;
+    inbox.restore(runId, `review drafted: ${draftHeadline(draft, pr ? inbox.ownPr(pr) : false)}`);
     return { ok: true as const };
   });
   // The only paths from a review draft to GitHub: buttons on the review screen.
