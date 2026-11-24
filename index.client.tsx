@@ -39,7 +39,7 @@ export default function contribute(client: PluginClientContext) {
   setOpenScreen((input) => client.openScreen(input), { explorerTabs: screenTabLocations?.includes("explorer") ?? false });
   client.addScreen({ id: INBOX_SCREEN, title: "Inbox", Component: InboxScreen });
   client.addScreen({ id: REVIEW_SCREEN, title: "Review", Component: ReviewScreen });
-  client.addSettingsScreen({ id: "inbox", title: "Inbox", icon: "Inbox", Component: InboxSettings });
+  client.addSettingsScreen({ id: "inbox", title: "Settings", icon: "Settings", Component: InboxSettings });
   // Older chats still hold the "Review draft ready" card; new drafts get a composer pill instead.
   client.addTimelineRenderer({ kind: REVIEW_CARD, version: 1, schema: ReviewCardSchema, Component: ReviewCard });
   // A draft or revise tool call reads as what it changed in the draft: comments added, edited, removed.
