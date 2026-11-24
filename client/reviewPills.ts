@@ -45,9 +45,10 @@ export function contributeReviewPills(client: PluginClientContext): () => void {
       loading.catch(() => files.delete(key));
       return loading;
     },
-    async post(runId) {
-      await client.rpc(postReview, { runId });
+    async post(runId, archive) {
+      const { kept } = await client.rpc(postReview, { runId, archive });
       void refresh().catch(() => undefined);
+      return kept ?? null;
     },
   };
   const postBehavior: PluginButton["behavior"] = { kind: "popover", Content: makePostPopover(store) };

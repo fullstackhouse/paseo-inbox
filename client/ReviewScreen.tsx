@@ -338,12 +338,13 @@ export function ReviewScreen({ theme, layout, navigation, params, setTitle }: Pl
       void refresh();
     }
   };
-  const submit = () =>
-    act("post", async (here) => {
-      const result = await post({ runId });
+  // "post-archive" also archives the run's workspace once the review is on GitHub.
+  const submit = (archive: boolean) =>
+    act(archive ? "post-archive" : "post", async (here) => {
+      const result = await post({ runId, archive });
       if (!here()) return;
       setDraft((current) => (current ? { ...current, postedUrl: result.url, postedVerdict: effectiveVerdict(current, own) } : current));
-      setNotice(`Posted: ${result.inline} inline${result.folded ? `, ${result.folded} in the review body` : ""}.`);
+      setNotice(`Posted: ${result.inline} inline${result.folded ? `, ${result.folded} in the review body` : ""}.${result.kept ? ` Kept the workspace: ${result.kept}.` : ""}`);
     });
   // Moves on at once; the dismiss finishes in the background.
   const done = () =>
@@ -953,14 +954,28 @@ export function ReviewScreen({ theme, layout, navigation, params, setTitle }: Pl
               <Text style={{ ...muted, flex: 1 }} numberOfLines={2}>
                 {stale ? `Posts on ${draft.version.slice(0, 7)}, where it was drafted; GitHub marks comments outdated where the code changed since. ` : ""}{`${live.length} comment${live.length === 1 ? "" : "s"}${folded ? ` (${folded} in the body)` : ""}${draft.comments.length > live.length ? ` · ${draft.comments.length - live.length} dropped` : ""}`}
               </Text>
+              {/* Most reviews end with the post, so Post & archive leads; plain Post keeps the reviewer to talk to. */}
+              {run.workspaceId ? (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`Post the review to GitHub as ${verdict} and keep the workspace`}
+                  disabled={!editable || Boolean(busy)}
+                  onPress={() => void submit(false)}
+                  style={{ borderWidth: 1, borderColor: theme.colors.border, paddingHorizontal: 14, paddingVertical: 9, borderRadius: 10, opacity: !editable || busy ? 0.5 : 1 }}
+                >
+                  <Text style={{ color: theme.colors.foreground, fontWeight: "600", fontSize: 14 }}>{busy === "post" ? "Posting…" : "Post"}</Text>
+                </Pressable>
+              ) : null}
               <Pressable
                 accessibilityRole="button"
-                accessibilityLabel={`Post the review to GitHub as ${verdict}`}
+                accessibilityLabel={run.workspaceId ? `Post the review to GitHub as ${verdict} and archive the workspace` : `Post the review to GitHub as ${verdict}`}
                 disabled={!editable || Boolean(busy)}
-                onPress={() => void submit()}
+                onPress={() => void submit(Boolean(run.workspaceId))}
                 style={{ backgroundColor: verdictColor(theme, verdict), paddingHorizontal: 16, paddingVertical: 10, borderRadius: 10, opacity: !editable || busy ? 0.5 : 1 }}
               >
-                <Text style={{ color: theme.colors.accentForeground, fontWeight: "600", fontSize: 14 }}>{busy === "post" ? "Posting…" : `Post as ${verdict}`}</Text>
+                <Text style={{ color: theme.colors.accentForeground, fontWeight: "600", fontSize: 14 }}>
+                  {busy === "post-archive" ? "Posting…" : run.workspaceId ? "Post & archive" : `Post as ${verdict}`}
+                </Text>
               </Pressable>
             </View>
           </View>

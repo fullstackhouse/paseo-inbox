@@ -2,6 +2,7 @@ import { fetchPrDeployments, fetchPrUpstream } from "./server/upstream";
 import { getPrDeployments, getPrUpstream, previewPrDeployments, previewPrUpstream } from "./shared/upstream";
 import type { PaseoApi, PaseoWorkspaceHandle } from "@getpaseo/client";
 import type { PluginServerContext } from "@getpaseo/plugin/server";
+import { fetchAvatar } from "./server/avatar";
 import { installBridge } from "./server/bridge";
 import { openInBrowser } from "./server/open";
 import { mkdirSync } from "node:fs";
@@ -100,6 +101,28 @@ export function prWorktree(pr: { repo: string; number: number }): { mode: "check
   return { mode: "checkout-pr", prNumber: pr.number, projectPath: pr.repo };
 }
 
+type AppearanceHandle = PaseoWorkspaceHandle & {
+  setAppearance?: (appearance: { avatar: string | null; titleIcon: string | null }) => Promise<unknown>;
+};
+
+/**
+ * Sets the review workspace apart from the human's own in the sidebar: the PR author's avatar in
+ * place of the project icon, and an inbox icon before the PR title. Only FSH Paseo has
+ * `setAppearance` (`features.workspaceAppearance`); elsewhere the row stays plain. A missing avatar
+ * still marks the row with the icon.
+ */
+async function markReviewWorkspace(paseo: PaseoApi, workspaceId: string, pr: { url: string; author: string }): Promise<void> {
+  const workspace = paseo.workspaces.ref(workspaceId) as AppearanceHandle;
+  if (!workspace.setAppearance) return;
+  const avatar = pr.author
+    ? await fetchAvatar(pr.url, pr.author).catch((error) => {
+        console.error("avatar fetch failed", error);
+        return null;
+      })
+    : null;
+  await workspace.setAppearance({ avatar, titleIcon: "Inbox" });
+}
+
 export default function contribute(server: PluginServerContext) {
   const dir = dataDir();
   const store = new StateStore(dir);
@@ -154,13 +177,18 @@ export default function contribute(server: PluginServerContext) {
       cwd,
       worktree: prWorktree(pr),
       background: true,
-      title: `Inbox · ${run.rule} · ${pr.repo}#${pr.number}${trusted ? "" : " · read-only"}`,
+      title: pr.title,
       config: { provider, modeId: trusted ? mode : "default" },
       labels: { [RUN_LABEL]: run.id, [PR_LABEL]: pr.url },
       env: { [RUN_ENV]: run.id, ...(trusted ? {} : { [UNTRUSTED_ENV]: "1" }) },
       prompt: trusted ? prompt : `${prompt}\n\nThis run is read-only: ${pr.author ? `@${pr.author}` : "the author"} isn't on your trust list, so you can read files and use the inbox tools but can't run commands.`,
     });
     await created.refresh().catch(() => null);
+    // Not awaited: the agent's turn is already running, and the run only learns its agent id once
+    // this returns. A stalled avatar download must not let a quick turn end unnoticed.
+    if (created.workspaceId !== null) {
+      void markReviewWorkspace(paseo, created.workspaceId, pr).catch((error) => console.error("marking the review workspace failed", error));
+    }
     return { agentId: created.id, workspaceId: created.workspaceId };
   };
 
@@ -191,6 +219,10 @@ export default function contribute(server: PluginServerContext) {
     },
     archive: async (workspaceId) => {
       await paseo?.workspaces.archive(workspaceId);
+    },
+    workspaceStatus: async (workspaceId) => {
+      if (!paseo) throw new Error("No Paseo session yet");
+      return (await paseo.workspaces.ref(workspaceId).refresh())?.status ?? null;
     },
     reveal: async (workspaceId) => {
       if (!paseo) return;
@@ -380,9 +412,13 @@ export default function contribute(server: PluginServerContext) {
     return { ok: true as const };
   });
   // The only paths from a review draft to GitHub: buttons on the review screen.
-  server.handle(postReview, ({ runId }, { paseo: api }) => {
+  server.handle(postReview, async ({ runId, archive }, { paseo: api }) => {
     capture(api);
-    return postDraft(inbox, reviews, runId, (repo, number, payload) => postPullReview(repo, number, payload), details, undefined, ghJson, draftFilesAt);
+    const posted = await postDraft(inbox, reviews, runId, (repo, number, payload) => postPullReview(repo, number, payload), details, undefined, ghJson, draftFilesAt);
+    if (!archive) return posted;
+    // The review is on GitHub by now, so failing to read the workspace only keeps it.
+    const kept = await inbox.archiveRun(runId).catch((error: unknown) => `couldn't check it: ${error instanceof Error ? error.message : String(error)}`);
+    return kept ? { ...posted, kept } : posted;
   });
   server.handle(handoffReview, ({ runId, to, note, sendDraft }, { paseo: api }) => {
     capture(api);

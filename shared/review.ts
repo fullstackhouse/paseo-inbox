@@ -572,7 +572,12 @@ export const setReviewVerdict = defineRpc({ name: "inbox.review_verdict", input:
 export const setFileViewed = defineRpc({ name: "inbox.review_viewed", input: z.object({ runId: z.string(), path: z.string(), patch: z.string().optional(), viewed: z.boolean() }), output: ReviewDraftSchema });
 /** Opens an http(s) link in the system browser on the daemon's machine (the desktop app's own window isn't signed in). */
 export const openExternal = defineRpc({ name: "inbox.open_url", input: z.object({ url: z.string().regex(/^https?:\/\//) }), output: ok });
-export const postReview = defineRpc({ name: "inbox.review_post", input: z.object({ runId: z.string() }), output: z.object({ url: z.string(), inline: z.number(), folded: z.number() }) });
+/** With `archive`, the run's workspace is archived once the review is on GitHub; `kept` says why it wasn't. */
+export const postReview = defineRpc({
+  name: "inbox.review_post",
+  input: z.object({ runId: z.string(), archive: z.boolean().optional() }),
+  output: z.object({ url: z.string(), inline: z.number(), folded: z.number(), kept: z.string().optional() }),
+});
 export const PreviewSchema = z.object({
   event: z.string(),
   body: z.string(),
