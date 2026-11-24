@@ -109,18 +109,30 @@ type AppearanceHandle = PaseoWorkspaceHandle & {
  * Sets the review workspace apart from the human's own in the sidebar: the PR author's avatar in
  * place of the project icon, and an inbox icon before the PR title. Only FSH Paseo has
  * `setAppearance` (`features.workspaceAppearance`); elsewhere the row stays plain. A missing avatar
- * still marks the row with the icon.
+ * still marks the row with the icon, and so does one Paseo refuses: the avatar and icon go in one
+ * call, so a refused avatar would otherwise lose the icon too.
  */
-async function markReviewWorkspace(paseo: PaseoApi, workspaceId: string, pr: { url: string; author: string }): Promise<void> {
+export async function markReviewWorkspace(
+  paseo: Pick<PaseoApi, "workspaces">,
+  workspaceId: string,
+  pr: { url: string; author: string },
+  avatarOf: (prUrl: string, login: string) => Promise<string | null> = fetchAvatar,
+): Promise<void> {
   const workspace = paseo.workspaces.ref(workspaceId) as AppearanceHandle;
   if (!workspace.setAppearance) return;
   const avatar = pr.author
-    ? await fetchAvatar(pr.url, pr.author).catch((error) => {
+    ? await avatarOf(pr.url, pr.author).catch((error) => {
         console.error("avatar fetch failed", error);
         return null;
       })
     : null;
-  await workspace.setAppearance({ avatar, titleIcon: "Inbox" });
+  try {
+    await workspace.setAppearance({ avatar, titleIcon: "Inbox" });
+  } catch (error) {
+    if (avatar === null) throw error;
+    console.error("Paseo refused the avatar; marking the review workspace without it", error);
+    await workspace.setAppearance({ avatar: null, titleIcon: "Inbox" });
+  }
 }
 
 export default function contribute(server: PluginServerContext) {

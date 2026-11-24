@@ -1,10 +1,33 @@
-import { describe, expect, it } from "vitest";
-import { avatarUrl, fetchAvatar } from "../server/avatar";
+import { describe, expect, it, vi } from "vitest";
+import { markReviewWorkspace } from "../index.server";
+import { avatarUrl, fetchAvatar, imageSize } from "../server/avatar";
 
-const respond = (status: number, bytes = Buffer.alloc(0)) => async () => ({
+// The headers a size reader looks at, followed by a few bytes of image data.
+function png(width: number, height: number): Buffer {
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(width, 0);
+  ihdr.writeUInt32BE(height, 4);
+  ihdr.writeUInt8(8, 8);
+  ihdr.writeUInt8(6, 9);
+  return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13]), Buffer.from("IHDR"), ihdr, Buffer.alloc(4), Buffer.alloc(32)]);
+}
+
+function jpeg(width: number, height: number): Buffer {
+  const app0 = Buffer.from([0xff, 0xe0, 0x00, 0x10, ...Buffer.from("JFIF\0"), 1, 1, 0, 0, 1, 0, 1, 0, 0]);
+  const tables = Buffer.from([0xff, 0xc4, 0x00, 0x04, 0x00, 0x00]);
+  const sof = Buffer.alloc(19);
+  sof.writeUInt16BE(0xffc2, 0);
+  sof.writeUInt16BE(17, 2);
+  sof.writeUInt8(8, 4);
+  sof.writeUInt16BE(height, 5);
+  sof.writeUInt16BE(width, 7);
+  return Buffer.concat([Buffer.from([0xff, 0xd8]), app0, Buffer.from([0xff]), tables, sof, Buffer.alloc(16)]);
+}
+
+const respond = (status: number, bytes: Buffer = Buffer.alloc(0)) => async () => ({
   ok: status >= 200 && status < 300,
   status,
-  arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
+  arrayBuffer: async () => new Uint8Array(bytes).buffer,
 });
 
 describe("avatarUrl", () => {
@@ -20,8 +43,8 @@ describe("avatarUrl", () => {
 
 describe("fetchAvatar", () => {
   it("returns the image as base64", async () => {
-    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
-    await expect(fetchAvatar("https://github.com/a/b/pull/1", "ola", respond(200, png))).resolves.toBe(png.toString("base64"));
+    const image = png(64, 64);
+    await expect(fetchAvatar("https://github.com/a/b/pull/1", "ola", respond(200, image))).resolves.toBe(image.toString("base64"));
   });
 
   it("returns null when the forge has no avatar for the login", async () => {
@@ -31,5 +54,56 @@ describe("fetchAvatar", () => {
   it("throws on other failures and on images Paseo would refuse", async () => {
     await expect(fetchAvatar("https://github.com/a/b/pull/1", "ola", respond(503))).rejects.toThrow("HTTP 503");
     await expect(fetchAvatar("https://github.com/a/b/pull/1", "ola", respond(200, Buffer.alloc(17 * 1024)))).rejects.toThrow("over 16384");
+  });
+
+  it("throws on a default identicon, which GitHub serves at 420×420 whatever size was asked", async () => {
+    await expect(fetchAvatar("https://github.com/a/b/pull/1", "ola", respond(200, png(420, 420)))).rejects.toThrow("420×420, not a square up to 256×256");
+  });
+
+  it("throws on an image that isn't square, or whose size can't be read", async () => {
+    await expect(fetchAvatar("https://github.com/a/b/pull/1", "ola", respond(200, jpeg(64, 48)))).rejects.toThrow("64×48");
+    await expect(fetchAvatar("https://github.com/a/b/pull/1", "ola", respond(200, Buffer.from("<html>")))).rejects.toThrow("size can be read");
+  });
+});
+
+describe("imageSize", () => {
+  it("reads PNG, GIF and JPEG headers", () => {
+    expect(imageSize(png(420, 420))).toEqual({ width: 420, height: 420 });
+    const gif = Buffer.concat([Buffer.from("GIF89a"), Buffer.from([64, 0, 32, 0]), Buffer.alloc(8)]);
+    expect(imageSize(gif)).toEqual({ width: 64, height: 32 });
+    expect(imageSize(jpeg(64, 48))).toEqual({ width: 64, height: 48 });
+  });
+
+  it("returns null for other formats and truncated files", () => {
+    expect(imageSize(Buffer.from("RIFF....WEBP"))).toBeNull();
+    expect(imageSize(png(64, 64).subarray(0, 20))).toBeNull();
+    expect(imageSize(jpeg(64, 64).subarray(0, 30))).toBeNull();
+  });
+});
+
+describe("markReviewWorkspace", () => {
+  const pr = { url: "https://github.com/a/b/pull/1", author: "ola" };
+  const host = (setAppearance: (appearance: unknown) => Promise<unknown>) => ({ workspaces: { ref: () => ({ setAppearance }) } }) as never;
+
+  it("sets the avatar and the Inbox icon in one call", async () => {
+    const setAppearance = vi.fn(async () => undefined);
+    await markReviewWorkspace(host(setAppearance), "ws", pr, async () => "AVATAR");
+    expect(setAppearance.mock.calls).toEqual([[{ avatar: "AVATAR", titleIcon: "Inbox" }]]);
+  });
+
+  it("still sets the Inbox icon when Paseo refuses the avatar", async () => {
+    const setAppearance = vi.fn(async (appearance: unknown) => {
+      if ((appearance as { avatar: string | null }).avatar) throw new Error("Avatar must be a square image up to 256×256");
+    });
+    const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    await markReviewWorkspace(host(setAppearance), "ws", pr, async () => "AVATAR");
+    logged.mockRestore();
+    expect(setAppearance.mock.calls).toEqual([[{ avatar: "AVATAR", titleIcon: "Inbox" }], [{ avatar: null, titleIcon: "Inbox" }]]);
+  });
+
+  it("doesn't retry a call that had no avatar to blame", async () => {
+    const setAppearance = vi.fn(async () => Promise.reject(new Error("workspace gone")));
+    await expect(markReviewWorkspace(host(setAppearance), "ws", pr, async () => null)).rejects.toThrow("workspace gone");
+    expect(setAppearance).toHaveBeenCalledTimes(1);
   });
 });
