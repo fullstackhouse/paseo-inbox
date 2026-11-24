@@ -15,7 +15,8 @@ export interface PostStore {
   draft(runId: string): Promise<ReviewDraft | null>;
   /** The PR's changed files at `version` with their patches, to tell which comments can sit on a line. */
   files(itemKey: string, version: string): Promise<readonly PrFile[]>;
-  post(runId: string): Promise<void>;
+  /** With `archive`, the run's workspace goes too; resolves to why it was kept, or null. */
+  post(runId: string, archive: boolean): Promise<string | null>;
 }
 
 type Loaded = {
@@ -38,7 +39,7 @@ async function load(store: PostStore, target: PostTarget): Promise<Loaded | null
 
 /**
  * The confirm behind the pill's Post item: what goes out (verdict, comments, which of them land in the
- * review body, the verdict-vs-findings warning), then Post or Cancel. Changing the verdict or the
+ * review body, the verdict-vs-findings warning), then Post & archive, Post (keeps the workspace) or Cancel. Changing the verdict or the
  * comments stays on the review screen.
  */
 export function makePostPopover(store: PostStore): ComponentType<PluginButtonContentProps> {
@@ -48,7 +49,9 @@ export function makePostPopover(store: PostStore): ComponentType<PluginButtonCon
     const styles = useMemo(() => makeStyles(props.theme, props.layout.compact), [props.theme, props.layout.compact]);
     const [loaded, setLoaded] = useState<Loaded | null>(null);
     const [error, setError] = useState<string | null>(null);
-    const [posting, setPosting] = useState(false);
+    /** Which button is posting: with `archive` the workspace goes too. */
+    const [posting, setPosting] = useState<"post" | "archive" | null>(null);
+    const [kept, setKept] = useState<string | null>(null);
 
     useEffect(() => {
       if (!target) return;
@@ -68,6 +71,8 @@ export function makePostPopover(store: PostStore): ComponentType<PluginButtonCon
       };
     }, [target]);
 
+    // Posted, but the workspace stayed: the pill no longer offers Post, so say it here before the target goes.
+    if (kept) return <Text style={styles.warning}>Posted. Kept the workspace: {kept}.</Text>;
     if (!target) return <Text style={styles.muted}>Nothing to post.</Text>;
     if (error && !loaded) return <Text style={styles.danger}>{error}</Text>;
     if (!loaded) return <ActivityIndicator color={props.theme.colors.foregroundMuted} />;
@@ -76,15 +81,16 @@ export function makePostPopover(store: PostStore): ComponentType<PluginButtonCon
     const { posted, folded, replies, held, dropped } = summary;
     const verdict = effectiveVerdict(draft);
     const mismatch = verdictMismatch(draft);
-    const post = async () => {
-      setPosting(true);
+    const post = async (archive: boolean) => {
+      setPosting(archive ? "archive" : "post");
       setError(null);
       try {
-        await store.post(target.runId);
-        props.close();
+        const reason = await store.post(target.runId, archive);
+        if (reason) setKept(reason);
+        else props.close();
       } catch (caught) {
         setError(message(caught));
-        setPosting(false);
+        setPosting(null);
       }
     };
 
@@ -109,15 +115,25 @@ export function makePostPopover(store: PostStore): ComponentType<PluginButtonCon
         {error ? <Text style={styles.danger}>{error}</Text> : null}
         <Text style={styles.muted}>To change the verdict or the comments, open the review.</Text>
         <View style={styles.actions}>
-          <Chip theme={props.theme} label="Cancel" disabled={posting} onPress={props.close} />
+          <Chip theme={props.theme} label="Cancel" disabled={posting !== null} onPress={props.close} />
+          {/* Most reviews end with the post, so Post & archive leads; plain Post keeps the reviewer to talk to. */}
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel={`Post the review to GitHub as ${verdict}`}
-            disabled={posting}
-            onPress={() => void post()}
+            accessibilityLabel={`Post the review to GitHub as ${verdict} and keep the workspace`}
+            disabled={posting !== null}
+            onPress={() => void post(false)}
+            style={[styles.keep, { opacity: posting ? 0.5 : 1 }]}
+          >
+            <Text style={styles.keepText}>{posting === "post" ? "Posting…" : "Post"}</Text>
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`Post the review to GitHub as ${verdict} and archive the workspace`}
+            disabled={posting !== null}
+            onPress={() => void post(true)}
             style={[styles.post, { backgroundColor: verdictColor(props.theme, verdict), opacity: posting ? 0.5 : 1 }]}
           >
-            <Text style={styles.postText}>{posting ? "Posting…" : `Post as ${verdict}`}</Text>
+            <Text style={styles.postText}>{posting === "archive" ? "Posting…" : "Post & archive"}</Text>
           </Pressable>
         </View>
       </View>
@@ -134,6 +150,8 @@ function makeStyles(theme: PluginTheme, compact: boolean) {
     muted: { color: colors.foregroundMuted, fontSize: 12 },
     warning: { color: colors.statusWarning, fontSize: 12 },
     danger: { color: colors.statusDanger, fontSize: 12 },
+    keep: { paddingHorizontal: 14, paddingVertical: 7, borderRadius: 8, borderWidth: 1, borderColor: colors.border },
+    keepText: { color: colors.foreground, fontWeight: "600" as const, fontSize: 13 },
     actions: { flexDirection: "row" as const, justifyContent: "flex-end" as const, alignItems: "center" as const, gap: 8, marginTop: 4 },
     post: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 8 },
     postText: { color: colors.accentForeground, fontWeight: "600" as const, fontSize: 13 },

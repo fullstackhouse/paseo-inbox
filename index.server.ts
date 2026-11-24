@@ -220,6 +220,10 @@ export default function contribute(server: PluginServerContext) {
     archive: async (workspaceId) => {
       await paseo?.workspaces.archive(workspaceId);
     },
+    workspaceStatus: async (workspaceId) => {
+      if (!paseo) throw new Error("No Paseo session yet");
+      return (await paseo.workspaces.ref(workspaceId).refresh())?.status ?? null;
+    },
     reveal: async (workspaceId) => {
       if (!paseo) return;
       // Hosts with workspaceBackgroundSet (FSH Paseo) have setBackground; elsewhere the run stays hidden.
@@ -407,9 +411,13 @@ export default function contribute(server: PluginServerContext) {
     return { ok: true as const };
   });
   // The only paths from a review draft to GitHub: buttons on the review screen.
-  server.handle(postReview, ({ runId }, { paseo: api }) => {
+  server.handle(postReview, async ({ runId, archive }, { paseo: api }) => {
     capture(api);
-    return postDraft(inbox, reviews, runId, (repo, number, payload) => postPullReview(repo, number, payload), details, undefined, ghJson, draftFilesAt);
+    const posted = await postDraft(inbox, reviews, runId, (repo, number, payload) => postPullReview(repo, number, payload), details, undefined, ghJson, draftFilesAt);
+    if (!archive) return posted;
+    // The review is on GitHub by now, so failing to read the workspace only keeps it.
+    const kept = await inbox.archiveRun(runId).catch((error: unknown) => `couldn't check it: ${error instanceof Error ? error.message : String(error)}`);
+    return kept ? { ...posted, kept } : posted;
   });
   server.handle(handoffReview, ({ runId, to, note, sendDraft }, { paseo: api }) => {
     capture(api);

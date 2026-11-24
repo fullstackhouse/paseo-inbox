@@ -36,6 +36,8 @@ export interface InboxDeps {
   ended?: (run: Run) => Promise<void>;
   /** Archives an inbox agent's workspace (and its worktree) once the human is done with it. */
   archive?: (workspaceId: string) => Promise<void>;
+  /** A workspace's state bucket (`running`, `needs_input`, …), or null once it is gone. */
+  workspaceStatus?: (workspaceId: string) => Promise<string | null>;
   /** The PR's review requests (GitHub timeline), for reopening a settled run when the human is asked again. */
   requests?: (pr: Pr) => Promise<ReviewRequest[]>;
   /** The signed-in GitHub login. */
@@ -306,6 +308,22 @@ export class Inbox {
     // background: removing worktrees is slow and the Dismiss button shouldn't wait on it.
     const workspaces = new Set(this.state.runs.filter((run) => run.itemKey === itemKey && run.rule === rule && run.workspaceId && run.state !== "running").map((run) => run.workspaceId!));
     for (const workspaceId of workspaces) void this.deps.archive?.(workspaceId).catch((error) => console.error("archive failed", workspaceId, error));
+  }
+
+  /**
+   * After a post, when the human asked for it: archives that run's own workspace. Not while an agent
+   * there works or waits on a permission prompt, since archiving would stop it. Returns why it kept
+   * the workspace, or null once the archive has started. Like Dismiss, it doesn't wait for the
+   * archive: removing a worktree is slow, and the review is already on GitHub.
+   */
+  async archiveRun(runId: string): Promise<string | null> {
+    const workspaceId = this.run(runId)?.workspaceId;
+    if (!workspaceId || !this.deps.archive) return "this review has no workspace to archive";
+    const status = await this.deps.workspaceStatus?.(workspaceId);
+    if (status === null) return null;
+    if (status === "running" || status === "needs_input") return "an agent there is still working";
+    void this.deps.archive(workspaceId).catch((error) => console.error("archive failed", workspaceId, error));
+    return null;
   }
 
   /** The run an inbox agent belongs to: its latest one. */
