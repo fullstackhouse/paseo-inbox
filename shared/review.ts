@@ -342,14 +342,14 @@ function where(comment: StoredComment): string {
   return `\`${comment.path}\` (line ${comment.originalLine ?? comment.line}${at}${code && code.length <= 120 && !code.includes("`") ? `, \`${code}\`` : ""}; changed since)`;
 }
 
-/** One line for the inbox row: verdict, confidence, and comment count by grade. */
-export function draftHeadline(draft: ReviewDraft): string {
+/** One line for the inbox row: verdict (comment on your own PR), confidence, and comment count by grade. */
+export function draftHeadline(draft: ReviewDraft, own = false): string {
   const live = draft.comments.filter((comment) => comment.status !== "dropped");
   const counts = [...SEVERITIES, null]
     .map((severity) => [severity ?? "note", live.filter((comment) => comment.severity === severity).length] as const)
     .filter(([, count]) => count)
     .map(([severity, count]) => `${count} ${severity}${count > 1 && severity === "note" ? "s" : ""}`);
-  return [`${effectiveVerdict(draft)} · ${draft.confidence}%`, counts.length ? counts.join(", ") : "no inline comments"].join(" · ");
+  return [`${effectiveVerdict(draft, own)} · ${draft.confidence}%`, counts.length ? counts.join(", ") : "no inline comments"].join(" · ");
 }
 
 /** "Approving over 2 blockers": the verdict disagrees with the findings still standing. */

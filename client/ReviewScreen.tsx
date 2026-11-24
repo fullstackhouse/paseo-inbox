@@ -637,7 +637,7 @@ export function ReviewScreen({ theme, layout, navigation, params, setTitle }: Pl
           <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
             {draft && verdict ? (
               <Pill theme={theme} color={verdictColor(theme, verdict)}>
-                {verdict} · {draft.confidence}%{draft.verdictOverride ? " (yours)" : ""}
+                {verdict} · {draft.confidence}%{!own && draft.verdictOverride ? " (yours)" : ""}
               </Pill>
             ) : null}
             {draft ? <Pill theme={theme} color={theme.colors.foregroundMuted}>{ageLabel("drafted", draft.createdAt)}{draft.reanchored ? ` · ${ageLabel("moved", draft.reanchored.at)}` : ""}</Pill> : null}

@@ -135,6 +135,7 @@ describe("human edits", () => {
     expect(composeReview(draft, []).payload.event).toBe("REQUEST_CHANGES");
   });
   it("headline counts by grade", () => expect(draftHeadline(draft)).toBe("request-changes · 80% · 1 blocker, 2 minor, 1 note"));
+  it("headline says comment on your own PR", () => expect(draftHeadline(draft, true)).toBe("comment · 80% · 1 blocker, 2 minor, 1 note"));
 });
 
 describe("reviewer revisions", () => {
@@ -258,6 +259,7 @@ describe("postDraft", () => {
     await callTool(inbox, reviews, "agent-1", "inbox_review_draft", raw, NOW);
     const runId = state().runs[0]!.id;
     expect(inbox.view().postable).toEqual({ [runId]: "comment" });
+    expect(state().runs[0]!.reason).toMatch(/^review drafted: comment · 80%/);
     const post = vi.fn(async (_repo: string, _number: number, _payload: unknown) => "u");
     await postDraft(inbox, reviews, runId, post, async () => details("aaaaaaa111"), NOW);
     expect(post.mock.calls[0]![2]).toMatchObject({ event: "COMMENT" });
