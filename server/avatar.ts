@@ -28,7 +28,7 @@ export async function fetchAvatar(prUrl: string, login: string, fetchImpl: Fetch
   const bytes = Buffer.from(await response.arrayBuffer());
   if (bytes.length > MAX_AVATAR_BYTES) throw new Error(`Avatar for ${login} is ${bytes.length} bytes, over ${MAX_AVATAR_BYTES}`);
   const size = imageSize(bytes);
-  if (!size) throw new Error(`Avatar for ${login} isn't a PNG, JPEG or GIF image whose size can be read`);
+  if (!size) throw new Error(`Avatar for ${login} isn't a PNG, JPEG, GIF or WebP image whose size can be read`);
   if (size.width !== size.height || size.width > MAX_AVATAR_SIDE) {
     throw new Error(`Avatar for ${login} is ${size.width}×${size.height}, not a square up to ${MAX_AVATAR_SIDE}×${MAX_AVATAR_SIDE}`);
   }
@@ -37,7 +37,7 @@ export async function fetchAvatar(prUrl: string, login: string, fetchImpl: Fetch
 
 type Size = { width: number; height: number };
 
-/** The pixel size of a PNG, GIF or JPEG from its header, or null for anything else or a truncated file. */
+/** The pixel size of a PNG, GIF, JPEG or WebP (the formats Paseo takes) from its header, or null for anything else or a truncated file. */
 export function imageSize(bytes: Buffer): Size | null {
   if (bytes.length >= 24 && bytes.readUInt32BE(0) === 0x89504e47 && bytes.toString("latin1", 12, 16) === "IHDR") {
     return { width: bytes.readUInt32BE(16), height: bytes.readUInt32BE(20) };
@@ -46,7 +46,27 @@ export function imageSize(bytes: Buffer): Size | null {
     return { width: bytes.readUInt16LE(6), height: bytes.readUInt16LE(8) };
   }
   if (bytes.length >= 4 && bytes[0] === 0xff && bytes[1] === 0xd8) return jpegSize(bytes);
+  if (bytes.length >= 30 && bytes.toString("latin1", 0, 4) === "RIFF" && bytes.toString("latin1", 8, 12) === "WEBP") return webpSize(bytes);
   return null;
+}
+
+// The first chunk of a WebP says how it is coded, and each coding keeps the size in its own place.
+function webpSize(bytes: Buffer): Size | null {
+  switch (bytes.toString("latin1", 12, 16)) {
+    case "VP8 ": // lossy: 14-bit sizes after the key frame's start code
+      if (bytes.readUIntBE(23, 3) !== 0x9d012a) return null;
+      return { width: bytes.readUInt16LE(26) & 0x3fff, height: bytes.readUInt16LE(28) & 0x3fff };
+    case "VP8L": {
+      // lossless: two 14-bit sizes minus one, packed after the 0x2f signature
+      if (bytes[20] !== 0x2f) return null;
+      const bits = bytes.readUInt32LE(21);
+      return { width: (bits & 0x3fff) + 1, height: ((bits >>> 14) & 0x3fff) + 1 };
+    }
+    case "VP8X": // extended: 24-bit canvas sizes minus one
+      return { width: bytes.readUIntLE(24, 3) + 1, height: bytes.readUIntLE(27, 3) + 1 };
+    default:
+      return null;
+  }
 }
 
 // Start-of-frame markers carry the size; C4 (Huffman tables), C8 (reserved) and CC (arithmetic coding) don't.

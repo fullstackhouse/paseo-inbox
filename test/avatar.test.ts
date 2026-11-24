@@ -66,6 +66,14 @@ describe("fetchAvatar", () => {
   });
 });
 
+// A RIFF container holding one chunk, padded so every size field is in reach.
+function webp(chunk: string, header: number[]): Buffer {
+  const body = Buffer.concat([Buffer.from(header), Buffer.alloc(16)]);
+  const size = Buffer.alloc(4);
+  size.writeUInt32LE(body.length);
+  return Buffer.concat([Buffer.from("RIFF"), Buffer.alloc(4), Buffer.from("WEBP"), Buffer.from(chunk), size, body]);
+}
+
 describe("imageSize", () => {
   it("reads PNG, GIF and JPEG headers", () => {
     expect(imageSize(png(420, 420))).toEqual({ width: 420, height: 420 });
@@ -74,7 +82,18 @@ describe("imageSize", () => {
     expect(imageSize(jpeg(64, 48))).toEqual({ width: 64, height: 48 });
   });
 
+  it("reads all three WebP codings, which Paseo also takes", () => {
+    // Lossy: frame tag, start code 9d 01 2a, then 14-bit width and height.
+    expect(imageSize(webp("VP8 ", [0, 0, 0, 0x9d, 0x01, 0x2a, 64, 0, 48, 0]))).toEqual({ width: 64, height: 48 });
+    // Lossless: signature 0x2f, then width-1 and height-1 in 14 bits each (63 and 47).
+    const bits = 63 | (47 << 14);
+    expect(imageSize(webp("VP8L", [0x2f, bits & 0xff, (bits >> 8) & 0xff, (bits >> 16) & 0xff, bits >>> 24]))).toEqual({ width: 64, height: 48 });
+    // Extended: flags, reserved, then 24-bit width-1 and height-1 (419 = 0x0001a3).
+    expect(imageSize(webp("VP8X", [0, 0, 0, 0, 0xa3, 0x01, 0x00, 0xa3, 0x01, 0x00]))).toEqual({ width: 420, height: 420 });
+  });
+
   it("returns null for other formats and truncated files", () => {
+    expect(imageSize(Buffer.from("BM6\0\0\0"))).toBeNull();
     expect(imageSize(Buffer.from("RIFF....WEBP"))).toBeNull();
     expect(imageSize(png(64, 64).subarray(0, 20))).toBeNull();
     expect(imageSize(jpeg(64, 64).subarray(0, 30))).toBeNull();
