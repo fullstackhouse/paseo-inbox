@@ -28,6 +28,10 @@ export const draftsReviews = (rule: Rule) => /review/i.test(rule.prompt) || rule
 /** Paseo needs `provider/model`; `paseo provider models <provider>` lists the model ids. */
 const ProviderSchema = z.string().regex(/^[\w-]+\/\S+$/, 'use "provider/model", e.g. "claude/claude-opus-5-5" (see `paseo provider models claude`)');
 
+/** Where a review opens from its chat: a tab in the main view (a sheet on phones), or the workspace's Explorer sidebar. */
+export const ReviewLocationSchema = z.enum(["main", "explorer"]);
+export type ReviewLocation = z.infer<typeof ReviewLocationSchema>;
+
 export const ConfigSchema = z.object({
   pollSeconds: z.number().int().min(60).default(300),
   maxConcurrent: z.number().int().min(1).default(2),
@@ -49,6 +53,7 @@ export const ConfigSchema = z.object({
   trust: z.array(z.string()).default([]),
   /** The rule a pasted PR URL runs; the first rule when unset. */
   manualRule: z.string().optional(),
+  reviewLocation: ReviewLocationSchema.default("main"),
 });
 export type Config = z.infer<typeof ConfigSchema>;
 /** True when nothing is configured yet (the defaults), so a legacy inbox.json may apply instead. */
@@ -463,6 +468,8 @@ export const InboxViewSchema = z.object({
   postable: z.record(z.string(), VerdictSchema).optional(),
   /** The signed-in GitHub login, once known: the list marks the PRs it authored and filters by them. */
   me: z.string().optional(),
+  /** The `reviewLocation` setting, so the client opens reviews where the human chose. */
+  reviewLocation: ReviewLocationSchema.optional(),
 });
 export type InboxView = z.infer<typeof InboxViewSchema>;
 
