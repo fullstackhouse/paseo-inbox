@@ -28,6 +28,7 @@ const ThreadComment = z.object({
   url: z.string(),
   createdAt: z.string(),
   pullRequestReview: z.object({ state: z.string(), databaseId: z.number().nullable() }).nullable(),
+  originalCommit: z.object({ oid: z.string() }).nullish(),
 });
 const Thread = z.object({
   id: z.string(),
@@ -35,6 +36,10 @@ const Thread = z.object({
   line: z.number().nullable(),
   isResolved: z.boolean(),
   isOutdated: z.boolean(),
+  originalLine: z.number().nullish(),
+  originalStartLine: z.number().nullish(),
+  startLine: z.number().nullish(),
+  diffSide: z.enum(["LEFT", "RIGHT"]).nullish(),
   comments: connection(ThreadComment),
 });
 const Check = z.discriminatedUnion("__typename", [
@@ -70,12 +75,12 @@ const CHECKS_QUERY = `query InboxChecks($owner: String!, $name: String!, $sha: G
   } } }
 }`;
 const COMMENT_FIELDS =
-  "id author { login } body url createdAt pullRequestReview { state databaseId }";
+  "id author { login } body url createdAt pullRequestReview { state databaseId } originalCommit { oid }";
 const THREADS_QUERY = `query InboxThreads($owner: String!, $name: String!, $number: Int!, $cursor: String) {
   repository(owner: $owner, name: $name) { pullRequest(number: $number) {
     reviewThreads(first: 100, after: $cursor) {
       pageInfo { hasNextPage endCursor }
-      nodes { id path line isResolved isOutdated
+      nodes { id path line isResolved isOutdated originalLine originalStartLine startLine diffSide
         comments(first: 100) { pageInfo { hasNextPage endCursor } nodes { ${COMMENT_FIELDS} } }
       }
     }
@@ -177,7 +182,8 @@ async function checksFor(repo: string, sha: string, run: Gh): Promise<PrUpstream
   return checks.map(toCheck);
 }
 
-async function threadsFor(repo: string, number: number, run: Gh): Promise<PrUpstream["threads"]> {
+/** Every review thread on the PR with its published comments, and where each was written. */
+export async function fetchThreads(repo: string, number: number, run: Gh = gh): Promise<PrUpstream["threads"]> {
   const [owner, name] = repo.split("/");
   const schema = z.object({
     data: z.object({
@@ -212,6 +218,7 @@ async function threadsFor(repo: string, number: number, run: Gh): Promise<PrUpst
             ? null
             : String(comment.pullRequestReview.databaseId),
       }));
+    const commit = comments.find((comment) => comment.pullRequestReview?.state !== "PENDING")?.originalCommit?.oid;
     if (published.length)
       result.push({
         id: thread.id,
@@ -219,6 +226,11 @@ async function threadsFor(repo: string, number: number, run: Gh): Promise<PrUpst
         line: thread.line,
         resolved: thread.isResolved,
         outdated: thread.isOutdated,
+        ...(commit ? { commit } : {}),
+        ...(thread.originalLine !== undefined ? { originalLine: thread.originalLine } : {}),
+        ...(thread.originalStartLine !== undefined ? { originalStartLine: thread.originalStartLine } : {}),
+        ...(thread.startLine !== undefined ? { startLine: thread.startLine } : {}),
+        ...(thread.diffSide ? { side: thread.diffSide } : {}),
         comments: published,
       });
   }
@@ -256,7 +268,7 @@ export async function fetchPrUpstream(
     );
   const [checks, threads, reviewPages, commentPages] = await Promise.all([
     checksFor(repo, headSha, run),
-    threadsFor(repo, number, run),
+    fetchThreads(repo, number, run),
     run(["api", "--paginate", "--slurp", `repos/${repo}/pulls/${number}/reviews?per_page=100`]),
     run(["api", "--paginate", "--slurp", `repos/${repo}/issues/${number}/comments?per_page=100`]),
   ]);

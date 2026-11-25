@@ -187,7 +187,7 @@ describe("fetchPrUpstream", () => {
                       thread("private", page([threadComment("private", "PENDING")])),
                     ])
                   : page(
-                      [thread("long", page([threadComment("first")], "comments-2"))],
+                      [{ ...thread("long", page([{ ...threadComment("first"), originalCommit: { oid: "c0ffee" } }], "comments-2")), originalLine: 3, startLine: null, originalStartLine: 2, diffSide: "RIGHT" }],
                       "threads-2",
                     ),
               },
@@ -210,6 +210,9 @@ describe("fetchPrUpstream", () => {
     expect(result.threads[0]?.comments.map((item) => item.id)).toEqual(["first", "second"]);
     expect(result.threads[0]?.comments[0]?.reviewId).toBe("123");
     expect(result.threads[1]).toMatchObject({ resolved: true, outdated: true, line: null });
+    // Where the comment was written: its commit and line there, for "did the code change since?".
+    expect(result.threads[0]).toMatchObject({ commit: "c0ffee", originalLine: 3, startLine: null, originalStartLine: 2, side: "RIGHT" });
+    expect(result.threads[1]).not.toHaveProperty("commit");
     const panel = pullRequestPanelData(
       { number: 7, title: "Change", url: "https://github.com/acme/shop/pull/7", repo: "acme/shop" },
       {

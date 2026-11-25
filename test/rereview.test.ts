@@ -2,15 +2,16 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { compareCommits, latestReviewBy, reviewRequests } from "../server/github";
+import { compareCommits, latestReviewBy, reviewRequests, reviewsBy } from "../server/github";
 import { Inbox, type InboxDeps } from "../server/inbox";
 import { postDraft } from "../server/post";
-import { filesAt, reanchorRun, sinceRun } from "../server/rereview";
+import { filesAt, reanchorRun, recapRun, sinceRun } from "../server/rereview";
 import { ReviewStore } from "../server/reviews";
 import { callTool } from "../server/tools";
 import { DISMISSED, plan, reopen, runId, setRun, type Pr, type State } from "../shared/inbox";
-import { anchorAt, askedAgain, locate, reanchorDraft, sideLines, sinceBase, sinceChanges, type Compare, type ReviewRequest } from "../shared/rereview";
-import { composeReview, effectiveVerdict, toDraft, updateComment, ReviewInputSchema, type PrDetails, type PrFile } from "../shared/review";
+import { buildRecap, lookLabel, priorSection, RecapSchema, threadStatus, touchedSince, triage, type Thread } from "../shared/recap";
+import { anchorAt, askedAgain, locate, reanchorDraft, sideLines, sinceBase, sinceChanges, type Compare, type ReviewRequest, type Since } from "../shared/rereview";
+import { composeReview, effectiveVerdict, RecapInputSchema, toDraft, updateComment, ReviewInputSchema, type PrDetails, type PrFile } from "../shared/review";
 import { config, emptyState, later, NOW, pr } from "./fixtures";
 
 const PATH = "src/basket/BasketPage.tsx";
@@ -288,12 +289,13 @@ describe("GitHub reads", () => {
 
   it("finds my latest submitted review and the timeline's review requests", async () => {
     const reviewsOut = JSON.stringify([[
-      { user: { login: "Jacek" }, state: "COMMENTED", commit_id: A, submitted_at: later(1), html_url: "r1" },
-      { user: { login: "jacek" }, state: "APPROVED", commit_id: B, submitted_at: later(9), html_url: "r2" },
-      { user: { login: "jacek" }, state: "PENDING", commit_id: "c", submitted_at: null, html_url: "r3" },
-      { user: { login: "kuba" }, state: "APPROVED", commit_id: "d", submitted_at: later(20), html_url: "r4" },
+      { id: 1, user: { login: "Jacek" }, state: "COMMENTED", commit_id: A, submitted_at: later(1), html_url: "r1" },
+      { id: 2, user: { login: "jacek" }, state: "APPROVED", commit_id: B, submitted_at: later(9), html_url: "r2" },
+      { id: 3, user: { login: "jacek" }, state: "PENDING", commit_id: "c", submitted_at: null, html_url: "r3" },
+      { id: 4, user: { login: "kuba" }, state: "APPROVED", commit_id: "d", submitted_at: later(20), html_url: "r4" },
     ]]);
-    expect(await latestReviewBy("acme/shop", 7, "jacek", async () => reviewsOut)).toEqual({ commit: B, at: later(9), url: "r2" });
+    expect(await latestReviewBy("acme/shop", 7, "jacek", async () => reviewsOut)).toEqual({ id: "2", state: "APPROVED", commit: B, at: later(9), url: "r2" });
+    expect((await reviewsBy("acme/shop", 7, "jacek", async () => reviewsOut)).map((review) => [review.id, review.state])).toEqual([["2", "APPROVED"], ["1", "COMMENTED"]]);
     const timeline = JSON.stringify({ data: { repository: { pullRequest: { timelineItems: { nodes: [
       { createdAt: later(1), actor: { login: "ola" }, requestedReviewer: { __typename: "User", login: "jacek" } },
       { createdAt: later(2), actor: { login: "ola" }, requestedReviewer: { __typename: "Team" } },
@@ -301,5 +303,126 @@ describe("GitHub reads", () => {
     const run = vi.fn(async (_args: string[]) => timeline);
     expect(await reviewRequests("acme/shop", 7, run)).toEqual([{ at: later(1), reviewer: "jacek", by: "ola" }, { at: later(2), reviewer: null, by: "ola" }]);
     expect(run.mock.calls[0]![0]).toEqual(expect.arrayContaining(["graphql", "owner=acme", "name=shop", "number=7"]));
+  });
+});
+
+describe("since your review: recap", () => {
+  const me = "jacek";
+  const comment = (author: string, body: string, minutes: number, reviewId: string | null = null) => ({ id: `${author}-${minutes}`, author, body, url: `u/${author}-${minutes}`, at: later(minutes), reviewId });
+  const thread = (id: string, overrides: Partial<Thread> = {}): Thread => ({
+    id,
+    path: PATH,
+    line: 4,
+    resolved: false,
+    outdated: false,
+    comments: [comment("Jacek", `About ${id}.`, 1, "r1")],
+    ...overrides,
+  });
+  // The since diff changes line 4 of the file at A (old side) = line 4 at B (new side).
+  const changed: PrFile = { path: PATH, status: "modified", additions: 1, deletions: 1, patch: "@@ -3,3 +3,3 @@\n function total() {\n-  return sum(items);\n+  return sum(items, discounts);\n }" };
+  const changes: Since = { kind: "changes", base: A, head: B, from: "posted", commits: [{ sha: B, message: "Fix" }], files: [changed], hidden: 0 };
+
+  it("finds the lines a since diff touched, on either side, including inserts right after them", () => {
+    expect(touchedSince(thread("t", { commit: A, originalLine: 4, line: null }), changes)).toBe(true);
+    expect(touchedSince(thread("t", { commit: A, originalLine: 8, line: 8 }), changes)).toBe(false);
+    // Written on an older round: GitHub's current line (at the head) is checked on the new side.
+    expect(touchedSince(thread("t", { commit: "old", originalLine: 2, line: 4 }), changes)).toBe(true);
+    expect(touchedSince(thread("t", { commit: "old", originalLine: 2, line: 2 }), changes)).toBe(false);
+    const insert: PrFile = { ...changed, patch: "@@ -4,2 +4,3 @@\n   return sum(items);\n+  // checked\n }" };
+    expect(touchedSince(thread("t", { commit: A, originalLine: 4 }), { ...changes, files: [insert] })).toBe(true);
+    expect(touchedSince(thread("t", { commit: A, originalLine: 2, originalStartLine: 1 }), { ...changes, files: [insert] })).toBe(false);
+    // A whole-file comment counts any change to its file; another file's change doesn't.
+    expect(touchedSince(thread("t", { line: null, originalLine: null }), changes)).toBe(true);
+    expect(touchedSince(thread("t", { path: "other.ts" }), changes)).toBe(false);
+    expect(touchedSince(thread("t", { commit: A, originalLine: 4 }), { kind: "rewritten", base: A, from: "posted", why: "diverged" })).toBe(false);
+  });
+
+  it("says what happened to each of my comments without reading the code", () => {
+    const status = (overrides: Partial<Thread>, since: Since = changes) => threadStatus(thread("t", overrides), me, since);
+    expect(status({ resolved: true, line: 9, commit: A, originalLine: 9 })).toMatchObject({ status: "fixed", why: "resolved" });
+    expect(status({ commit: A, originalLine: 4 })).toMatchObject({ status: "fixed", why: "changed" });
+    expect(status({ commit: A, originalLine: 9, line: 9, outdated: true })).toMatchObject({ status: "outdated" });
+    const replied = status({ commit: A, originalLine: 9, line: 9, comments: [comment("jacek", "Why?", 1), comment("ola", "On purpose.", 5), comment("coderabbit[bot]", "Noted", 6), comment("jacek", "Hm", 7)] });
+    expect(replied).toMatchObject({ status: "pushed-back", body: "Why?", reply: { author: "ola", body: "On purpose." } });
+    expect(status({ commit: A, originalLine: 9, line: 9 })).toMatchObject({ status: "unanswered", reply: null });
+  });
+
+  it("lists my past reviews with their comment counts, and only my threads, those needing me first", () => {
+    const threads = [
+      thread("fixed", { resolved: true }),
+      thread("open", { line: 9, commit: A, originalLine: 9 }),
+      thread("theirs", { comments: [comment("kuba", "Mine", 1)] }),
+      thread("answered", { line: 9, commit: A, originalLine: 9, comments: [comment("jacek", "Q", 1, "r2"), comment("ola", "A", 2)] }),
+    ];
+    const reviews = [
+      { id: "r2", state: "COMMENTED", commit: A, at: later(2), url: "r2" },
+      { id: "r1", state: "CHANGES_REQUESTED", commit: "old", at: later(1), url: "r1" },
+    ];
+    const recap = buildRecap(changes, threads, reviews, me, null);
+    expect(recap.reviews).toEqual([
+      { id: "r2", state: "COMMENTED", commit: A, at: later(2), url: "r2", comments: 1 },
+      { id: "r1", state: "CHANGES_REQUESTED", commit: "old", at: later(1), url: "r1", comments: 2 },
+    ]);
+    expect(recap.comments.map((item) => [item.thread, item.status])).toEqual([
+      ["answered", "pushed-back"],
+      ["open", "unanswered"],
+      ["fixed", "fixed"],
+    ]);
+    expect(RecapSchema.safeParse(recap).success).toBe(true);
+  });
+
+  it("after a force-push, still gives the statuses it can and tells the reviewer to look again in full", () => {
+    const rewritten: Since = { kind: "rewritten", base: A, from: "posted", why: "unreachable" };
+    const recap = buildRecap(rewritten, [thread("t", { commit: A, originalLine: 4 }), thread("r", { resolved: true })], [], me, null);
+    expect(recap.comments.map((item) => item.status)).toEqual(["unanswered", "fixed"]);
+    const text = priorSection(recap).join("\n");
+    expect(text).toContain("No clean diff since aaaaaaa");
+    expect(text).toContain('"full"');
+  });
+
+  it("gives the reviewer my earlier threads by id and the diff since my review", () => {
+    const recap = buildRecap(changes, [thread("PRRT_1", { commit: A, originalLine: 4, comments: [comment("jacek", "Discounts are skipped.", 1, "r1"), comment("ola", "Fixed.", 3)] })], [{ id: "r1", state: "CHANGES_REQUESTED", commit: A, at: later(1), url: "r1" }], me, null);
+    const text = priorSection(recap).join("\n");
+    expect(text).toContain("## Your previous review");
+    expect(text).toContain("thread PRRT_1 · src/basket/BasketPage.tsx:4 · fixed (code changed): Discounts are skipped.");
+    expect(text).toContain('last reply @ola: "Fixed."');
+    expect(text).toContain("changes requested on aaaaaaa (1 comment)");
+    expect(text).toContain("+  return sum(items, discounts);");
+    expect(priorSection(buildRecap({ kind: "none" }, [], [], me, null))).toEqual([]);
+  });
+
+  it("sorts the reviewer's triage riskiest first and counts what to check", () => {
+    const ai = RecapInputSchema.parse({ look: "check", check: ["Discount rounding"], changes: [{ path: "b.ts", risk: "mechanical" }, { path: "a.ts", risk: "logic", note: "New branch" }] });
+    expect(triage(ai.changes).map((change) => change.path)).toEqual(["a.ts", "b.ts"]);
+    expect(lookLabel(ai)).toBe("Check 1 thing");
+    expect(lookLabel({ ...ai, check: ["x", "y"] })).toBe("Check 2 things");
+    expect(lookLabel({ ...ai, look: "full" })).toBe("Full re-look");
+  });
+});
+
+describe("recapRun", () => {
+  it("reads my threads and reviews only when there is a prior review, and keeps the reviewer's verdicts", async () => {
+    const { inbox, reviews, runId: id } = await drafted();
+    reviews.save({ ...reviews.get(id)!, recap: RecapInputSchema.parse({ look: "full", why: "Rewritten." }) });
+    const threads = vi.fn(async (): Promise<Thread[]> => [{ id: "t1", path: PATH, line: 4, resolved: true, outdated: false, comments: [{ id: "c", author: "jacek", body: "x", url: "u", at: NOW, reviewId: "1" }] }]);
+    const reviewsBy = vi.fn(async () => [{ id: "1", state: "COMMENTED", commit: "ppppppp000", at: NOW, url: "u" }]);
+    const base = { details: async () => details(A, [file(OLD)]), me: async () => "jacek", compare: async (): Promise<Compare> => ({ status: "ahead", behindBy: 0, commits: [], files: [file(OLD)] }), threads, reviewsBy };
+    const recap = await recapRun(inbox, reviews, id, { ...base, latestReview: async () => ({ commit: "ppppppp000", at: NOW, url: "u" }) });
+    expect(recap).toMatchObject({ since: { kind: "changes" }, reviews: [{ comments: 1 }], comments: [{ status: "fixed" }], ai: { look: "full" } });
+    threads.mockClear();
+    expect(await recapRun(inbox, reviews, id, { ...base, latestReview: async () => null })).toEqual({ since: { kind: "none" }, reviews: [], comments: [], ai: null });
+    expect(threads).not.toHaveBeenCalled();
+    const failing = await recapRun(inbox, reviews, id, { ...base, latestReview: async () => ({ commit: "ppppppp000", at: NOW, url: "u" }), threads: async () => Promise.reject(new Error("rate limited")) });
+    expect(failing).toMatchObject({ since: { kind: "changes" }, comments: [], error: "Couldn't read your earlier comments: rate limited" });
+  });
+
+  it("puts the prior review into inbox_pr for the reviewer", async () => {
+    const { inbox, reviews } = await drafted();
+    const prior = vi.fn(async () => ["## Your previous review", "thread t1 · fixed"]);
+    const result = await callTool(inbox, reviews, "agent-1", "inbox_pr", {}, NOW, async () => details(A, [file(OLD)]), prior);
+    expect(result.text).toContain("## Your previous review");
+    expect(result.text.indexOf("## Your previous review")).toBeLessThan(result.text.indexOf("## Diff"));
+    const broken = await callTool(inbox, reviews, "agent-1", "inbox_pr", {}, NOW, async () => details(A, [file(OLD)]), async () => Promise.reject(new Error("x")));
+    expect(broken.isError).toBeFalsy();
   });
 });

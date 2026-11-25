@@ -31,6 +31,13 @@ export const PrUpstreamSchema = z.object({
       line: z.number().nullable(),
       resolved: z.boolean(),
       outdated: z.boolean(),
+      /** Where the first comment was written: its commit, and the line (range) there. */
+      commit: z.string().optional(),
+      originalLine: z.number().nullable().optional(),
+      originalStartLine: z.number().nullable().optional(),
+      /** The first line of a multi-line comment at the head (`line` is the last). */
+      startLine: z.number().nullable().optional(),
+      side: z.enum(["LEFT", "RIGHT"]).optional(),
       comments: z.array(CommentSchema.extend({ reviewId: z.string().nullable() })),
     }),
   ),

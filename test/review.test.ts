@@ -153,6 +153,14 @@ describe("reviewer revisions", () => {
     expect(revised.comments[0]!.severity).toBe("minor");
     expect(revised.verdict).toBe("approve");
   });
+  it("saves and revises the re-review recap", () => {
+    const recap = { look: "check", check: ["Rounding"], comments: [{ thread: "PRRT_1", addressed: "partly" }] };
+    const saved = replaceDraft(null, ReviewInputSchema.parse({ ...input, recap }), run, NOW);
+    expect(saved.recap).toMatchObject({ look: "check", comments: [{ thread: "PRRT_1", addressed: "partly", note: "" }], changes: [] });
+    const { draft: revised, applied } = reviseDraft(saved, ReviseInputSchema.parse({ recap: { look: "full", why: "Rebased." } }));
+    expect(applied).toEqual(["set recap"]);
+    expect(revised.recap).toMatchObject({ look: "full", why: "Rebased." });
+  });
 });
 
 /** An inbox with one running review run, agent `agent-1`, at PR head `aaaaaaa111`. */

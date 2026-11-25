@@ -36,6 +36,8 @@ export async function callTool(
   args: unknown,
   now = new Date().toISOString(),
   details?: (repo: string, number: number) => Promise<PrDetails>,
+  /** The human's previous review as `inbox_pr` lines (`priorSection`); a failure just leaves it out. */
+  prior?: (runId: string) => Promise<string[]>,
 ): Promise<ToolResult> {
   try {
     const run = agentId ? inbox.runForAgent(agentId) : null;
@@ -43,7 +45,8 @@ export async function callTool(
     if (name === PR_TOOL) {
       const pr = inbox.item(run.itemKey)?.pr;
       if (!pr || !details) throw new Error("The PR isn't available");
-      return { text: prContext(pr, await details(pr.repo, pr.number)) };
+      const [prDetails, previous] = await Promise.all([details(pr.repo, pr.number), prior ? prior(run.id).catch(() => []) : []]);
+      return { text: prContext(pr, prDetails, undefined, previous) };
     }
     const previous = reviews.get(run.id);
     const repo = inbox.item(run.itemKey)?.pr.repo;

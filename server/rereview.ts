@@ -1,4 +1,5 @@
 import { runId as makeRunId } from "../shared/inbox";
+import { buildRecap, type Recap, type Thread } from "../shared/recap";
 import { reanchorDraft, sinceBase, sinceChanges, type Compare, type MyReview, type Since } from "../shared/rereview";
 import type { PrDetails, PrFile } from "../shared/review";
 import type { Inbox } from "./inbox";
@@ -58,6 +59,30 @@ export async function sinceRun(inbox: Inbox, reviews: ReviewStore, runId: string
   const base = fromDraft ?? sinceBase(draft, live.headSha, mine);
   const compare = base && base.sha !== live.headSha ? await deps.compare(item.pr.repo, base.sha, live.headSha) : null;
   return sinceChanges(base, live.headSha, compare, new Set(live.files.map((file) => file.path)));
+}
+
+export interface RecapDeps extends SinceDeps {
+  threads: (repo: string, number: number) => Promise<Thread[]>;
+  reviewsBy: (repo: string, number: number, me: string) => Promise<MyReview[]>;
+}
+
+/**
+ * "Since your review": the since diff plus the human's past reviews and what happened to each of their
+ * threads, with the reviewer's verdicts from the draft. GitHub's threads are read only when there was a
+ * prior review; if that read fails, the since diff still comes back, with the error.
+ */
+export async function recapRun(inbox: Inbox, reviews: ReviewStore, runId: string, deps: RecapDeps): Promise<Recap> {
+  const since = await sinceRun(inbox, reviews, runId, deps);
+  if (since.kind === "none") return buildRecap(since, [], [], "", null);
+  const pr = inbox.item(inbox.run(runId)!.itemKey)!.pr;
+  const ai = reviews.get(runId)?.recap ?? null;
+  try {
+    const me = await deps.me();
+    const [threads, mine] = await Promise.all([deps.threads(pr.repo, pr.number), deps.reviewsBy(pr.repo, pr.number, me)]);
+    return buildRecap(since, threads, mine, me, ai);
+  } catch (error) {
+    return { since, reviews: [], comments: [], ai, error: `Couldn't read your earlier comments: ${error instanceof Error ? error.message : String(error)}` };
+  }
 }
 
 /** The PR's diff at an earlier head: from the details cache, else GitHub's compare of the base branch with that commit. */

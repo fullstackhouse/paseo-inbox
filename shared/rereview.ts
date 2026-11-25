@@ -109,8 +109,8 @@ export function reanchorDraft(draft: ReviewDraft, oldFiles: readonly PrFile[] | 
 
 // ---------- Changes since my last review ----------
 
-/** The human's latest review of this PR on GitHub. */
-export type MyReview = { commit: string; at: string; url: string };
+/** One of the human's submitted reviews of this PR on GitHub; `state` is GitHub's (APPROVED, COMMENTED…). */
+export type MyReview = { commit: string; at: string; url: string; id?: string; state?: string };
 
 export type SinceBase = { sha: string; from: "draft" | "reviewed" | "posted"; at?: string };
 

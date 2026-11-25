@@ -287,6 +287,7 @@ export async function compareCommits(repo: string, base: string, head: string, r
 }
 
 const ReviewSchema = z.object({
+  id: z.number(),
   user: z.object({ login: z.string() }).nullish(),
   state: z.string(),
   commit_id: z.string().nullish(),
@@ -294,16 +295,23 @@ const ReviewSchema = z.object({
   html_url: z.string(),
 });
 
-/** The latest review `me` submitted on the PR (not a pending one), with the commit it was on. */
-export async function latestReviewBy(repo: string, number: number, me: string, run: Gh = gh): Promise<import("../shared/rereview").MyReview | null> {
+type MyReview = import("../shared/rereview").MyReview;
+
+/** Every review `me` submitted on the PR (not pending ones), newest first, with the commit each was on. */
+export async function reviewsBy(repo: string, number: number, me: string, run: Gh = gh): Promise<MyReview[]> {
   const pages = await run(["api", "--paginate", "--slurp", `repos/${repo}/pulls/${number}/reviews?per_page=100`]);
-  const mine = z
+  return z
     .array(z.array(ReviewSchema))
     .parse(JSON.parse(pages))
     .flat()
     .filter((review) => review.user?.login.toLowerCase() === me.toLowerCase() && review.state !== "PENDING" && review.commit_id && review.submitted_at)
-    .sort((a, b) => Date.parse(b.submitted_at!) - Date.parse(a.submitted_at!))[0];
-  return mine ? { commit: mine.commit_id!, at: mine.submitted_at!, url: mine.html_url } : null;
+    .sort((a, b) => Date.parse(b.submitted_at!) - Date.parse(a.submitted_at!))
+    .map((review) => ({ id: String(review.id), state: review.state, commit: review.commit_id!, at: review.submitted_at!, url: review.html_url }));
+}
+
+/** The latest review `me` submitted on the PR, with the commit it was on. */
+export async function latestReviewBy(repo: string, number: number, me: string, run: Gh = gh): Promise<MyReview | null> {
+  return (await reviewsBy(repo, number, me, run))[0] ?? null;
 }
 
 const OutcomeSchema = z.object({
