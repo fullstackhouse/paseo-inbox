@@ -28,7 +28,7 @@ const READ_ONLY: DiffActions = {
 
 /**
  * A PR opened by link that has no review yet: its description and diff, read-only, with Start review
- * and checks & activity. Starting a review swaps this for the full review screen.
+ * and Open on GitHub. Starting a review swaps this for the full review screen.
  */
 export function PrPreview(props: {
   theme: PluginTheme;
