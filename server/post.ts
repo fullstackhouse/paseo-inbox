@@ -36,7 +36,7 @@ export async function previewDraft(inbox: Inbox, reviews: ReviewStore, runId: st
   const item = run ? inbox.item(run.itemKey) : null;
   if (!run || !draft || !item) throw new Error("No review draft for this run");
   const live = await details(item.pr.repo, item.pr.number);
-  const composed = composeReview(draft, await draftFiles(draft, item.pr, live, filesAt));
+  const composed = composeReview(draft, await draftFiles(draft, item.pr, live, filesAt), inbox.ownPr(item.pr));
   return {
     event: composed.payload.event,
     body: composed.payload.body,
@@ -58,9 +58,10 @@ export async function previewDraft(inbox: Inbox, reviews: ReviewStore, runId: st
 export async function postDraft(inbox: Inbox, reviews: ReviewStore, runId: string, post: Poster, details: Details, now = new Date().toISOString(), ghJson?: GhJson, filesAt?: FilesAt) {
   const { draft, pr } = context(inbox, reviews, runId);
   const live = await details(pr.repo, pr.number);
-  const { payload, inline, folded, replies } = composeReview(draft, await draftFiles(draft, pr, live, filesAt));
+  const own = inbox.ownPr(pr);
+  const { payload, inline, folded, replies } = composeReview(draft, await draftFiles(draft, pr, live, filesAt), own);
   const url = await post(pr.repo, pr.number, payload);
-  reviews.save({ ...draft, postedAt: now, postedUrl: url, postedVerdict: effectiveVerdict(draft) });
+  reviews.save({ ...draft, postedAt: now, postedUrl: url, postedVerdict: effectiveVerdict(draft, own) });
   inbox.markPosted(runId, url);
   const failed: number[] = [];
   for (const reply of replies) {

@@ -1,5 +1,5 @@
 import type { PluginButton, PluginButtonRegistration, PluginClientContext } from "@getpaseo/plugin/client";
-import { listInbox, reviewPill } from "../shared/inbox";
+import { isMine, listInbox, reviewPill } from "../shared/inbox";
 import { getPrDetails, getReview, postReview, type PrFile, type Verdict } from "../shared/review";
 import { openReview } from "./nav";
 import { makePostPopover, type PostStore, type PostTarget } from "./PostReviewPopover";
@@ -45,9 +45,10 @@ export function contributeReviewPills(client: PluginClientContext): () => void {
       loading.catch(() => files.delete(key));
       return loading;
     },
-    async post(runId) {
-      await client.rpc(postReview, { runId });
+    async post(runId, archive) {
+      const { kept } = await client.rpc(postReview, { runId, archive });
       void refresh().catch(() => undefined);
+      return kept ?? null;
     },
   };
   const postBehavior: PluginButton["behavior"] = { kind: "popover", Content: makePostPopover(store) };
@@ -89,7 +90,7 @@ export function contributeReviewPills(client: PluginClientContext): () => void {
       // Only on a real change: a new behavior closes the menu or popover the human has open.
       if (existing) existing.registration.update(button(runId, workspaceId, posted, postAs));
       const registration = existing?.registration ?? client.addComposerPill({ id: "review", workspaceId, agentId, button: { icon: "ClipboardCheck", ...button(runId, workspaceId, posted, postAs) } });
-      pills.set(agentId, { registration, key, target: postAs ? { runId, itemKey } : null });
+      pills.set(agentId, { registration, key, target: postAs ? { runId, itemKey, own: isMine(view.items[itemKey]?.pr, view.me) } : null });
     }
     for (const listener of listeners) listener();
   };

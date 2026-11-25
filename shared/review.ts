@@ -272,7 +272,14 @@ export function withGrade(body: string, severity: Severity): string {
   return severity ? `${SEVERITY_BADGE[severity]} **${severity}** — ${body}` : body;
 }
 
-export const effectiveVerdict = (draft: Pick<ReviewDraft, "verdict" | "verdictOverride">): Verdict => draft.verdictOverride ?? draft.verdict;
+/**
+ * The verdict a draft posts as. On your own PR GitHub refuses approve and request-changes, so `own`
+ * makes every draft a comment, whatever the reviewer or the human picked.
+ */
+export const effectiveVerdict = (draft: Pick<ReviewDraft, "verdict" | "verdictOverride">, own = false): Verdict => (own ? "comment" : (draft.verdictOverride ?? draft.verdict));
+
+/** The verdicts the human can pick: only comment on their own PR. */
+export const verdictChoices = (own: boolean): readonly Verdict[] => (own ? ["comment"] : VerdictSchema.options);
 
 const EVENTS: Record<Verdict, "APPROVE" | "COMMENT" | "REQUEST_CHANGES"> = {
   approve: "APPROVE",
@@ -284,7 +291,7 @@ const EVENTS: Record<Verdict, "APPROVE" | "COMMENT" | "REQUEST_CHANGES"> = {
  * GitHub's create-review payload. Comments on a diff line go inline; file-level comments and lines
  * outside the diff are folded into the body, because GitHub rejects the whole review over one of them.
  */
-export function composeReview(draft: ReviewDraft, files: readonly { path: string; patch?: string }[]) {
+export function composeReview(draft: ReviewDraft, files: readonly { path: string; patch?: string }[], own = false) {
   const posted = draft.comments.filter((comment) => comment.status !== "dropped");
   const held = posted.filter(isHeld);
   const replies = posted.filter((comment) => comment.raised !== null && comment.reply);
@@ -310,7 +317,7 @@ export function composeReview(draft: ReviewDraft, files: readonly { path: string
     held: held.length,
     payload: {
       commit_id: draft.version,
-      event: EVENTS[effectiveVerdict(draft)],
+      event: EVENTS[effectiveVerdict(draft, own)],
       body: draft.bodyOverride ?? generatedBody,
       comments: inline.map((comment) => ({ path: comment.path, line: comment.line!, side: comment.side, body: withGrade(comment.body, comment.severity) })),
     },
@@ -350,20 +357,20 @@ function where(comment: StoredComment): string {
   return `\`${comment.path}\` (line ${comment.originalLine ?? comment.line}${at}${code && code.length <= 120 && !code.includes("`") ? `, \`${code}\`` : ""}; changed since)`;
 }
 
-/** One line for the inbox row: verdict, confidence, and comment count by grade. */
-export function draftHeadline(draft: ReviewDraft): string {
+/** One line for the inbox row: verdict (comment on your own PR), confidence, and comment count by grade. */
+export function draftHeadline(draft: ReviewDraft, own = false): string {
   const live = draft.comments.filter((comment) => comment.status !== "dropped");
   const counts = [...SEVERITIES, null]
     .map((severity) => [severity ?? "note", live.filter((comment) => comment.severity === severity).length] as const)
     .filter(([, count]) => count)
     .map(([severity, count]) => `${count} ${severity}${count > 1 && severity === "note" ? "s" : ""}`);
-  return [`${effectiveVerdict(draft)} · ${draft.confidence}%`, counts.length ? counts.join(", ") : "no inline comments"].join(" · ");
+  return [`${effectiveVerdict(draft, own)} · ${draft.confidence}%`, counts.length ? counts.join(", ") : "no inline comments"].join(" · ");
 }
 
 /** "Approving over 2 blockers": the verdict disagrees with the findings still standing. */
-export function verdictMismatch(draft: ReviewDraft): string | null {
+export function verdictMismatch(draft: ReviewDraft, own = false): string | null {
   const blockers = draft.comments.filter((comment) => comment.status !== "dropped" && comment.severity === "blocker").length;
-  const verdict = effectiveVerdict(draft);
+  const verdict = effectiveVerdict(draft, own);
   if (verdict === "approve" && blockers) return `Approving over ${blockers} blocker${blockers > 1 ? "s" : ""}`;
   if (verdict === "request-changes" && !blockers) return "Requesting changes with no blocker left";
   return null;
@@ -408,7 +415,8 @@ Writing: plain words and short sentences that someone who hasn't read the diff c
 
 References: on GitHub a bare #N links to PR or issue N of the reviewed repository. Write a PR or issue in any other repository in full as owner/repo#N (or its full URL) every time you mention it, never shortened to #N, even right after you wrote it in full.
 
-summary (markdown): what the PR does and why, general to specific. Always use these ### sections in order, each opening with its emoji, and leave out any with nothing real in them: 🎯 the problem (no identifiers), 🔧 the fix, 🔍 details, ⚠️ worth knowing. Describe the PR, not your review of it.
+summary (markdown): what the PR does and why, general to specific. Always use these ### sections in order, each opening with its emoji, and leave out any with nothing real in them: 🎯 the problem (no identifiers), 🔧 the fix, 🧩 how the pieces fit, 🔍 details, ⚠️ worth knowing. Describe the PR, not your review of it.
+🧩 only when the PR adds a flow or changes how parts work together, even inside one module; small internal changes skip it. Draw one \`flowchart TD\` Mermaid diagram per level that changed (system, modules, inside a module), each with a sentence or two and about 12 nodes at most: plain labels in double quotes, every arrow labelled with what passes along it, and "today" and "after" subgraphs when an existing flow changes. When the PR description already has a fitting diagram, reuse it rather than drawing another.
 
 reasoning (markdown): one lead sentence naming the deciding finding, or "No blockers.", then 2-5 bullets, each opening with a bolded two-to-three-word lead and holding one fact ("**Ran the tests** — ..."). End with what you couldn't settle and what would settle it.
 
@@ -598,7 +606,12 @@ export const setReviewVerdict = defineRpc({ name: "inbox.review_verdict", input:
 export const setFileViewed = defineRpc({ name: "inbox.review_viewed", input: z.object({ runId: z.string(), path: z.string(), patch: z.string().optional(), viewed: z.boolean() }), output: ReviewDraftSchema });
 /** Opens an http(s) link in the system browser on the daemon's machine (the desktop app's own window isn't signed in). */
 export const openExternal = defineRpc({ name: "inbox.open_url", input: z.object({ url: z.string().regex(/^https?:\/\//) }), output: ok });
-export const postReview = defineRpc({ name: "inbox.review_post", input: z.object({ runId: z.string() }), output: z.object({ url: z.string(), inline: z.number(), folded: z.number() }) });
+/** With `archive`, the run's workspace is archived once the review is on GitHub; `kept` says why it wasn't. */
+export const postReview = defineRpc({
+  name: "inbox.review_post",
+  input: z.object({ runId: z.string(), archive: z.boolean().optional() }),
+  output: z.object({ url: z.string(), inline: z.number(), folded: z.number(), kept: z.string().optional() }),
+});
 export const PreviewSchema = z.object({
   event: z.string(),
   body: z.string(),

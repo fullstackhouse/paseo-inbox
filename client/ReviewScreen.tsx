@@ -8,7 +8,7 @@ import { GitHubTab } from "./GitHubTab";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Platform, Pressable, ScrollView, Text, View } from "react-native";
 import { fileAt, nextUnviewed, stepFile } from "../shared/filetree";
-import { addPr, DISMISSED, parsePrRef, restoreRun, reviewRunFor, runNow, skipRun, type Run } from "../shared/inbox";
+import { addPr, DISMISSED, isMine, parsePrRef, restoreRun, reviewRunFor, runNow, skipRun, type Run } from "../shared/inbox";
 import {
   addReviewComment,
   deleteReviewComment,
@@ -26,7 +26,7 @@ import {
   setFileViewed,
   setReviewVerdict,
   updateReviewComment,
-  VerdictSchema,
+  verdictChoices,
   verdictMismatch,
   walkthrough,
   type CommentChange,
@@ -43,6 +43,7 @@ import { HandoffPanel, PreviewPane } from "./Decide";
 import { FileDiff, type DiffActions } from "./FileDiff";
 import { FileIndex } from "./FileIndex";
 import { Markdown } from "./Markdown";
+import { openReviewerChat } from "./nav";
 import { PrPreview } from "./PrPreview";
 import { useOpenUrl } from "./openUrl";
 import { agoText, Chip, MONO, Pill, PrStatePill, STICKY, verdictColor } from "./ui";
@@ -83,6 +84,8 @@ export function ReviewScreen({ theme, layout, navigation, params, setTitle }: Pl
   }, [byPr, runId]);
   const run = view?.runs.find((candidate) => candidate.id === runId) ?? null;
   const pr = run ? view?.items[run.itemKey]?.pr : undefined;
+  // GitHub refuses approve and request-changes on your own PR, so it only offers comment.
+  const own = isMine(pr, view?.me);
   const prLabel = usePrTabTitle(setTitle, pr);
 
   const fetchDraft = useRpc(getReview);
@@ -274,7 +277,7 @@ export function ReviewScreen({ theme, layout, navigation, params, setTitle }: Pl
     async (question: string, about: string): Promise<boolean> => {
       try {
         await discuss({ runId, message: `About ${about}:\n\n${question}` });
-        if (run?.agentId && navigation) navigation.openAgent({ agentId: run.agentId });
+        if (run?.agentId && navigation) openReviewerChat(navigation, { ...run, agentId: run.agentId }, layout.compact);
         else setNotice("Sent to the reviewer.");
         return true;
       } catch (caught) {
@@ -282,7 +285,7 @@ export function ReviewScreen({ theme, layout, navigation, params, setTitle }: Pl
         return false;
       }
     },
-    [discuss, runId, run?.agentId, navigation],
+    [discuss, runId, run, navigation, layout.compact],
   );
 
   /** The draft a run's RPC returned, kept only while that run is still on screen. */
@@ -338,12 +341,13 @@ export function ReviewScreen({ theme, layout, navigation, params, setTitle }: Pl
       void refresh();
     }
   };
-  const submit = () =>
-    act("post", async (here) => {
-      const result = await post({ runId });
+  // "post-archive" also archives the run's workspace once the review is on GitHub.
+  const submit = (archive: boolean) =>
+    act(archive ? "post-archive" : "post", async (here) => {
+      const result = await post({ runId, archive });
       if (!here()) return;
-      setDraft((current) => (current ? { ...current, postedUrl: result.url, postedVerdict: effectiveVerdict(current) } : current));
-      setNotice(`Posted: ${result.inline} inline${result.folded ? `, ${result.folded} in the review body` : ""}.`);
+      setDraft((current) => (current ? { ...current, postedUrl: result.url, postedVerdict: effectiveVerdict(current, own) } : current));
+      setNotice(`Posted: ${result.inline} inline${result.folded ? `, ${result.folded} in the review body` : ""}.${result.kept ? ` Kept the workspace: ${result.kept}.` : ""}`);
     });
   // Moves on at once; the dismiss finishes in the background.
   const done = () =>
@@ -486,8 +490,8 @@ export function ReviewScreen({ theme, layout, navigation, params, setTitle }: Pl
   const drafting = !draft && (run.state === "running" || run.state === "queued");
   const live = draft?.comments.filter((comment) => comment.status !== "dropped") ?? [];
   const folded = live.filter((comment) => details && placement(comment, files) !== "inline").length;
-  const verdict = draft ? effectiveVerdict(draft) : null;
-  const mismatch = draft ? verdictMismatch(draft) : null;
+  const verdict = draft ? effectiveVerdict(draft, own) : null;
+  const mismatch = draft ? verdictMismatch(draft, own) : null;
   const threadsFor = (path: string) => details?.threads.filter((thread) => thread.path === path) ?? [];
   const tabs: { id: Tab; label: string }[] = [
     { id: "summary", label: "Summary" },
@@ -495,7 +499,7 @@ export function ReviewScreen({ theme, layout, navigation, params, setTitle }: Pl
     ...(since && since.kind !== "none" ? [{ id: "since" as const, label: `Since ${since.base.slice(0, 7)}${since.kind === "changes" ? ` · ${since.files.length}` : ""}` }] : []),
     { id: "files", label: `Files ${details ? files.length : pr.files.length}` },
     { id: "description", label: "Description" },
-    { id: "github", label: "GitHub" },
+    { id: "github", label: "Checks & activity" },
     { id: "comments", label: `Your comments ${live.length}` },
     ...(draft && !draft.postedUrl ? [{ id: "preview" as const, label: draft.bodyOverride !== undefined ? "Preview (edited)" : "Preview" }] : []),
   ];
@@ -637,7 +641,7 @@ export function ReviewScreen({ theme, layout, navigation, params, setTitle }: Pl
           <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
             {draft && verdict ? (
               <Pill theme={theme} color={verdictColor(theme, verdict)}>
-                {verdict} · {draft.confidence}%{draft.verdictOverride ? " (yours)" : ""}
+                {verdict} · {draft.confidence}%{!own && draft.verdictOverride ? " (yours)" : ""}
               </Pill>
             ) : null}
             {draft ? <Pill theme={theme} color={theme.colors.foregroundMuted}>{ageLabel("drafted", draft.createdAt)}{draft.reanchored ? ` · ${ageLabel("moved", draft.reanchored.at)}` : ""}</Pill> : null}
@@ -649,8 +653,8 @@ export function ReviewScreen({ theme, layout, navigation, params, setTitle }: Pl
             {run.trusted === false ? <Pill theme={theme} color={theme.colors.statusWarning}>read-only run: author not trusted</Pill> : null}
             {details?.threads.length ? <Pill theme={theme} color={theme.colors.foregroundMuted}>{details.threads.length} comments from others</Pill> : null}
             <View style={{ flex: 1 }} />
-            <Chip theme={theme} label="GitHub ↗" onPress={() => openUrl(pr.url)} />
-            {run.agentId && navigation ? <Chip theme={theme} label="Reviewer chat" onPress={() => navigation.openAgent({ agentId: run.agentId! })} /> : null}
+            <Chip theme={theme} label="Open on GitHub ↗" onPress={() => openUrl(pr.url)} />
+            {run.agentId && navigation ? <Chip theme={theme} label="Reviewer chat" onPress={() => openReviewerChat(navigation, { ...run, agentId: run.agentId! }, layout.compact)} /> : null}
           </View>
           {stale && run.state !== "running" ? (
             <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
@@ -697,7 +701,7 @@ export function ReviewScreen({ theme, layout, navigation, params, setTitle }: Pl
                 </Text>
                 <View style={{ flexDirection: "row", gap: 8 }}>
                   <Chip theme={theme} label="Files" style={small} textStyle={{ fontSize: 12 }} onPress={() => setTab("files")} />
-                  {run.agentId && navigation ? <Chip theme={theme} label="Watch the reviewer" style={small} textStyle={{ fontSize: 12 }} onPress={() => navigation.openAgent({ agentId: run.agentId! })} /> : null}
+                  {run.agentId && navigation ? <Chip theme={theme} label="Watch the reviewer" style={small} textStyle={{ fontSize: 12 }} onPress={() => openReviewerChat(navigation, { ...run, agentId: run.agentId! }, layout.compact)} /> : null}
                 </View>
               </View>
             ) : (
@@ -918,7 +922,7 @@ export function ReviewScreen({ theme, layout, navigation, params, setTitle }: Pl
               </Text>
             ) : null}
             <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-              {VerdictSchema.options.map((option) => (
+              {verdictChoices(own).map((option) => (
                 <Chip
                   key={option}
                   theme={theme}
@@ -943,6 +947,11 @@ export function ReviewScreen({ theme, layout, navigation, params, setTitle }: Pl
                   }
                 />
               ))}
+              {own ? (
+                <Text style={{ ...muted, flexShrink: 1 }} numberOfLines={2}>
+                  Your own PR: GitHub doesn't let you approve it or request changes on it.
+                </Text>
+              ) : null}
               <View style={{ flex: 1 }} />
               <Chip theme={theme} label="Hand off" active={handingOff} disabled={Boolean(busy) || !run.agentId} style={small} textStyle={{ fontSize: 12 }} onPress={() => setHandingOff(!handingOff)} />
               <Chip theme={theme} label={busy === "done" ? "…" : next ? "Dismiss, next" : "Dismiss"} disabled={Boolean(busy)} style={small} textStyle={{ fontSize: 12 }} onPress={() => void done()} />
@@ -951,14 +960,28 @@ export function ReviewScreen({ theme, layout, navigation, params, setTitle }: Pl
               <Text style={{ ...muted, flex: 1 }} numberOfLines={2}>
                 {stale ? `Posts on ${draft.version.slice(0, 7)}, where it was drafted; GitHub marks comments outdated where the code changed since. ` : ""}{`${live.length} comment${live.length === 1 ? "" : "s"}${folded ? ` (${folded} in the body)` : ""}${draft.comments.length > live.length ? ` · ${draft.comments.length - live.length} dropped` : ""}`}
               </Text>
+              {/* Most reviews end with the post, so Post & archive leads; plain Post keeps the reviewer to talk to. */}
+              {run.workspaceId ? (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`Post the review to GitHub as ${verdict} and keep the workspace`}
+                  disabled={!editable || Boolean(busy)}
+                  onPress={() => void submit(false)}
+                  style={{ borderWidth: 1, borderColor: theme.colors.border, paddingHorizontal: 14, paddingVertical: 9, borderRadius: 10, opacity: !editable || busy ? 0.5 : 1 }}
+                >
+                  <Text style={{ color: theme.colors.foreground, fontWeight: "600", fontSize: 14 }}>{busy === "post" ? "Posting…" : "Post"}</Text>
+                </Pressable>
+              ) : null}
               <Pressable
                 accessibilityRole="button"
-                accessibilityLabel={`Post the review to GitHub as ${verdict}`}
+                accessibilityLabel={run.workspaceId ? `Post the review to GitHub as ${verdict} and archive the workspace` : `Post the review to GitHub as ${verdict}`}
                 disabled={!editable || Boolean(busy)}
-                onPress={() => void submit()}
+                onPress={() => void submit(Boolean(run.workspaceId))}
                 style={{ backgroundColor: verdictColor(theme, verdict), paddingHorizontal: 16, paddingVertical: 10, borderRadius: 10, opacity: !editable || busy ? 0.5 : 1 }}
               >
-                <Text style={{ color: theme.colors.accentForeground, fontWeight: "600", fontSize: 14 }}>{busy === "post" ? "Posting…" : `Post as ${verdict}`}</Text>
+                <Text style={{ color: theme.colors.accentForeground, fontWeight: "600", fontSize: 14 }}>
+                  {busy === "post-archive" ? "Posting…" : run.workspaceId ? "Post & archive" : `Post as ${verdict}`}
+                </Text>
               </Pressable>
             </View>
           </View>

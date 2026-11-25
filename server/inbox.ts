@@ -1,4 +1,4 @@
-import { DISMISSED, draftsReviews, explainedReason, unexplained, type PrOutcome, latestRound, modeFor, moveRun, noCheckoutReason, plan, renderPrompt, providerFor, reopen, reopenable, requeue, runId, setRun, startable, type Config, type InboxView, type Pr, type Run, type State } from "../shared/inbox";
+import { CANCELED, DISMISSED, START_FAILED, draftsReviews, isMine, explainedReason, unexplained, type PrOutcome, latestRound, modeFor, moveRun, noCheckoutReason, plan, renderPrompt, providerFor, reopen, reopenable, requeue, runId, setRun, startable, type Config, type InboxView, type Pr, type Run, type State } from "../shared/inbox";
 import { askedAgain, type ReviewRequest } from "../shared/rereview";
 import type { Verdict } from "../shared/review";
 
@@ -36,6 +36,8 @@ export interface InboxDeps {
   ended?: (run: Run) => Promise<void>;
   /** Archives an inbox agent's workspace (and its worktree) once the human is done with it. */
   archive?: (workspaceId: string) => Promise<void>;
+  /** A workspace's state bucket (`running`, `needs_input`, …), or null once it is gone. */
+  workspaceStatus?: (workspaceId: string) => Promise<string | null>;
   /** The PR's review requests (GitHub timeline), for reopening a settled run when the human is asked again. */
   requests?: (pr: Pr) => Promise<ReviewRequest[]>;
   /** The signed-in GitHub login. */
@@ -91,7 +93,8 @@ export class Inbox {
     for (const run of this.state.runs) {
       if (run.state !== "needs-decision") continue;
       const draft = draftOf(run.id);
-      if (draft) postable[run.id] = draft.verdict;
+      const pr = this.state.items[run.itemKey]?.pr;
+      if (draft) postable[run.id] = pr && this.ownPr(pr) ? "comment" : draft.verdict;
     }
     return postable;
   }
@@ -222,7 +225,9 @@ export class Inbox {
       const rule = config.rules.find((candidate) => candidate.name === run.rule);
       const cwd = pr && Object.entries(config.checkouts).find(([repo]) => repo.toLowerCase() === pr.repo.toLowerCase())?.[1];
       if (!pr || !rule || !cwd) {
-        this.commit(setRun(this.state, run.id, { state: "failed", reason: !rule ? "rule removed from inbox.json" : "no checkout" }, this.now()));
+        // The clone can go between queueing and dispatch; it waits for one again, like a fresh run.
+        const patch: Partial<Run> = !rule ? { state: "failed", reason: "rule removed from inbox.json" } : !pr ? { state: "failed", reason: "PR no longer in the inbox" } : { state: "no-checkout", reason: noCheckoutReason(pr.repo) };
+        this.commit(setRun(this.state, run.id, patch, this.now()));
         continue;
       }
       this.commit(setRun(this.state, run.id, { state: "running", reason: undefined }, this.now()));
@@ -235,7 +240,7 @@ export class Inbox {
         const limited = /rate limit/i.test(message(error));
         const patch: Partial<Run> = limited
           ? { state: "queued", reason: "GitHub rate limit; retrying on the next poll" }
-          : { state: "failed", reason: `could not start the agent: ${message(error)}` };
+          : { state: "failed", reason: `${START_FAILED}${message(error)}` };
         this.commit(setRun(this.state, run.id, patch, this.now()));
         if (limited) break;
       }
@@ -249,7 +254,7 @@ export class Inbox {
     const patch: Partial<Run> =
       outcome.kind === "completed"
         ? { state: "needs-decision" }
-        : { state: "failed", reason: outcome.kind === "failed" ? outcome.error.message : `canceled: ${outcome.reason}` };
+        : { state: "failed", reason: outcome.kind === "failed" ? outcome.error.message : `${CANCELED}${outcome.reason}` };
     this.commit(setRun(this.state, run.id, patch, this.now()));
     const ended = this.state.runs.find((candidate) => candidate.id === run.id);
     if (ended && outcome.kind !== "canceled") void this.deps.ended?.(ended).catch(() => undefined);
@@ -306,6 +311,22 @@ export class Inbox {
     for (const workspaceId of workspaces) void this.deps.archive?.(workspaceId).catch((error) => console.error("archive failed", workspaceId, error));
   }
 
+  /**
+   * After a post, when the human asked for it: archives that run's own workspace. Not while an agent
+   * there works or waits on a permission prompt, since archiving would stop it. Returns why it kept
+   * the workspace, or null once the archive has started. Like Dismiss, it doesn't wait for the
+   * archive: removing a worktree is slow, and the review is already on GitHub.
+   */
+  async archiveRun(runId: string): Promise<string | null> {
+    const workspaceId = this.run(runId)?.workspaceId;
+    if (!workspaceId || !this.deps.archive) return "this review has no workspace to archive";
+    const status = await this.deps.workspaceStatus?.(workspaceId);
+    if (status === null) return null;
+    if (status === "running" || status === "needs_input") return "an agent there is still working";
+    void this.deps.archive(workspaceId).catch((error) => console.error("archive failed", workspaceId, error));
+    return null;
+  }
+
   /** The run an inbox agent belongs to: its latest one. */
   runForAgent(agentId: string): Run | null {
     return [...this.state.runs].reverse().find((run) => run.agentId === agentId) ?? null;
@@ -317,6 +338,11 @@ export class Inbox {
 
   item(key: string) {
     return this.state.items[key] ?? null;
+  }
+
+  /** The signed-in user wrote this PR (false while the login isn't known yet). */
+  ownPr(pr: Pr): boolean {
+    return isMine(pr, this.login ?? undefined);
   }
 
   /** Undo Dismiss: the run is back to needs-decision with `reason`, without announcing it again. */
@@ -351,8 +377,6 @@ export class Inbox {
     const id = this.state.runs.find((run) => run.itemKey === pr.key && run.rule === rule.name && run.version === pr.headSha)!.id;
     // Under "manual", so a poll of the rule's own source never closes it for being absent there.
     this.commit(setRun(this.state, id, { source: "manual" }, now));
-    const checkout = Object.keys(config.checkouts).some((repo) => repo.toLowerCase() === pr.repo.toLowerCase());
-    if (!checkout) this.commit(setRun(this.state, id, { state: "no-checkout", reason: noCheckoutReason(pr.repo) }, now));
     await this.dispatch(config);
     return this.run(id)!;
   }

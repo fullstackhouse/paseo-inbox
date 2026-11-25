@@ -2,9 +2,11 @@ import { useRpc, useSettings, type PluginSurfaceProps, type SettingsState } from
 import { SettingsAction, SettingsCard, SettingsInput, SettingsRow, SettingsSection, SettingsSelect, SettingsSwitch } from "@getpaseo/plugin/client/ui";
 import { useEffect, useMemo, useState } from "react";
 import { Text, TextInput, View } from "react-native";
-import { ConfigSchema, isUnconfigured, type Config } from "../shared/inbox";
+import { ConfigSchema, isUnconfigured, type Config, type ReviewLocation } from "../shared/inbox";
 import { inboxSettings, readLegacyConfig } from "../shared/settings";
 import { parseTrust } from "../shared/trust";
+import { canOpenReviewsInExplorer } from "./nav";
+import { publish, snapshot } from "./useInbox";
 
 type Ready = Extract<SettingsState<typeof inboxSettings.schema>, { status: "ready" }>;
 
@@ -14,6 +16,10 @@ const POLL = [
   { label: "Every 15 minutes", value: "900" },
   { label: "Every 30 minutes", value: "1800" },
 ] as const;
+const REVIEW_LOCATIONS = [
+  { label: "Main view", value: "main" },
+  { label: "Explorer sidebar", value: "explorer" },
+] as const satisfies readonly { label: string; value: ReviewLocation }[];
 const AGENTS = ["1", "2", "3", "4"].map((value) => ({ label: value, value }));
 
 const checkoutsText = (config: Config) =>
@@ -72,6 +78,22 @@ function Form({ settings, theme }: { settings: Ready; theme: PluginSurfaceProps[
           <SettingsSelect label="Reviewers at once" value={String(Math.min(values.maxConcurrent, 4))} options={AGENTS} disabled={settings.saving} onValueChange={(value) => save({ maxConcurrent: Number(value) })} />
           <Field label="Model" hint="provider/model; `paseo provider models claude` lists them" value={values.provider} onSave={(provider) => save({ provider })} error={settings.saveError} />
           <Field label="Mode" hint="For trusted runs. Claude: auto. Untrusted runs always ask, and the inbox answers." value={values.mode} onSave={(mode) => save({ mode })} />
+          {canOpenReviewsInExplorer() ? (
+            <SettingsSelect
+              label="Open reviews in"
+              hint="Where a chat's Review pill opens its review. Phones always use a sheet."
+              value={values.reviewLocation}
+              options={REVIEW_LOCATIONS}
+              disabled={settings.saving}
+              onValueChange={(reviewLocation) => {
+                // The shared view carries it to the pills; once saved, apply it now instead of on the next refresh.
+                void settings.save({ ...values, reviewLocation }, settings.revision).then((saved) => {
+                  const view = snapshot();
+                  if (saved && view) publish({ ...view, reviewLocation });
+                });
+              }}
+            />
+          ) : null}
         </SettingsCard>
       </SettingsSection>
 

@@ -1,19 +1,56 @@
-import type { PluginOpenScreenInput } from "@getpaseo/plugin/client";
+import type { PluginOpenScreenInput, PluginPanelLocation, PluginScreenProps } from "@getpaseo/plugin/client";
+import type { ReviewLocation } from "../shared/inbox";
 
 /** paseo-inbox's review screen. Other plugins open it by this id, so it is a public contract. */
 export const REVIEW_SCREEN = "review";
 
 // COMPAT(screenTabs): the FSH host opens a screen as a tab of `workspaceId`; @getpaseo/plugin 0.15.3 has no
 // type for it yet, and older hosts ignore it and open the screen over the app. Drop once the SDK ships it.
-type OpenScreenInput = PluginOpenScreenInput & { workspaceId?: string };
+// COMPAT(screenTabLocation): `location: "explorer"` puts that tab in the Explorer sidebar on FSH hosts that list
+// it in `screenTabLocations`; older ones ignore it. Drop the field from this type once the SDK ships it.
+type OpenScreenInput = PluginOpenScreenInput & { workspaceId?: string; location?: PluginPanelLocation };
 
-// Screens get no openScreen prop; the client entry hands the context's one over at startup.
+type NavOptions = {
+  /** The host can put a workspace tab in Explorer. */
+  explorerTabs?: boolean;
+  /** The human's `reviewLocation` setting; unknown means "main". */
+  reviewLocation?: () => ReviewLocation | undefined;
+};
+
+// Screens get no openScreen prop; the client entry hands the context's one over at startup, with whether
+// the host can put a workspace tab in Explorer and where the human wants reviews.
 let open: ((input: OpenScreenInput) => void) | null = null;
-export const setOpenScreen = (fn: (input: PluginOpenScreenInput) => void) => {
+let options: NavOptions = {};
+export const setOpenScreen = (fn: (input: PluginOpenScreenInput) => void, next: NavOptions = {}) => {
   open = fn;
+  options = next;
 };
 export const openScreen = (input: OpenScreenInput) => open?.(input);
 
-/** Opens a run's review: as a tab next to its reviewer when the run has a workspace, else over the app. */
+/** The host can put a review in the Explorer sidebar, so the `reviewLocation` setting means something. */
+export const canOpenReviewsInExplorer = () => Boolean(options.explorerTabs);
+
+/** Reviews go to the Explorer sidebar only when the human chose it and the host supports it. */
+const reviewsInExplorer = () => Boolean(options.explorerTabs) && options.reviewLocation?.() === "explorer";
+
+/**
+ * Opens a run's review. With a workspace it is a tab of that workspace: in the main view by default (the host
+ * shows it in a sheet on phones), or in its Explorer sidebar, beside the reviewer chat, when the human chose
+ * that and the host can put it there. Without one it opens over the app.
+ */
 export const openReview = (runId: string, workspaceId?: string | null) =>
-  openScreen({ screenId: REVIEW_SCREEN, params: { runId }, ...(workspaceId ? { workspaceId } : {}) });
+  openScreen({ screenId: REVIEW_SCREEN, params: { runId }, ...(workspaceId ? { workspaceId, ...(reviewsInExplorer() ? { location: "explorer" as const } : {}) } : {}) });
+
+/**
+ * Opens the reviewer chat in the main pane. With reviews in the Explorer sidebar it keeps the review beside
+ * the chat, so you talk to the reviewer with the draft in view. Otherwise, and on compact layouts where
+ * Explorer would cover the chat, it only opens the chat: a main-view review tab would take focus back.
+ */
+export function openReviewerChat(
+  navigation: NonNullable<PluginScreenProps["navigation"]>,
+  run: { id: string; agentId: string; workspaceId?: string | null },
+  compact: boolean,
+) {
+  navigation.openAgent({ agentId: run.agentId });
+  if (!compact && reviewsInExplorer() && run.workspaceId) openReview(run.id, run.workspaceId);
+}

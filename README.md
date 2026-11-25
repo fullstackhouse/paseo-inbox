@@ -19,8 +19,9 @@ Paseo shows an **Inbox** row in the sidebar, with the number of runs waiting on 
 
 ## Configure
 
-**Settings → Plugins → paseo-inbox → Inbox** (or "Inbox settings" in the Command Center). The settings live in Paseo's own store on the host:
+**Settings → Plugins → paseo-inbox → Settings** (or "Inbox settings" in the Command Center). The settings live in Paseo's own store on the host:
 - **Running**, how often to check GitHub, how many reviewers run at once, the model, and the mode.
+- **Open reviews in**: the main view (default; a sheet on phones) or the workspace's Explorer sidebar, beside the chat. Shown on Paseo builds that support Explorer tabs. Set it here only; a `reviewLocation` in `inbox.json` is ignored.
 - **Trust** rules.
 - Local checkouts, one per line.
 - Sources and rules, as JSON.
@@ -61,17 +62,17 @@ Until settings hold any sources or rules, a legacy `~/.paseo/inbox.json` applies
 
 Inbox agents get one MCP tool, `inbox_review_draft`. It takes a verdict, a confidence (0–100), a markdown summary, optional chapters, and inline comments on lines of the diff. The draft is saved under `~/.paseo/plugin-data/inbox/reviews/`, and the run moves to **Needs a decision**. Tap a drafted row to open the **review screen**, which works on a phone and on desktop:
 
-- **Header:** the PR's repo and number, title, author, branch → base, head SHA, size, the verdict with confidence, plus **GitHub ↗** and **Ask the reviewer**. Ask the reviewer opens the agent that wrote the draft, so you can argue with it or have it redraft. A redraft replaces your edits.
+- **Header:** the PR's repo and number, title, author, branch → base, head SHA, size, the verdict with confidence, plus **Open on GitHub ↗** and **Ask the reviewer**. Ask the reviewer opens the agent that wrote the draft, so you can argue with it or have it redraft. A redraft replaces your edits.
 - **Tabs:** Summary, Walkthrough (the reviewer's chapters with their files), Files (every file with its diff and the drafted comments under their lines, plus Expand all, Collapse all and Only commented), Description (the author's PR body), and Comments.
 - **Comments:** each one can be kept, edited, dropped or restored.
 - **Moving between drafts:** ‹ › steps through the other drafts waiting for you.
 - **Reading:** syntax colours in diffs. A markdown file the PR adds opens as a document, with comments under their paragraphs (Diff is one tap away). Markdown uses Paseo’s shared renderer, including Mermaid diagrams, tables, images and links. Document comments use the FSH host’s Markdown annotation API (ship the matching host change before this plugin). Each file has a Viewed box, which unticks if the file changes; "Not viewed" opens only the files you haven't seen. Tapping a comment's path jumps to its file.
 - **Your comments:** tap any diff line, or "Comment on the whole file", to add your own or to ask the reviewer about it. Regrade any comment (blocker, minor, nit, note).
 - **Talking to the reviewer:** "Ask about this" (and "Ask about the summary") opens a box for your question; **Ask the reviewer** sends it to the agent, quoting the comment, and opens the agent. Its changes arrive through `inbox_review_revise`, which never touches comments you wrote or decided on.
-- **GitHub** shows current checks, unresolved review threads, and published reviews and comments. It refreshes when you open the tab; **Refresh** fetches again and the timestamp shows the last successful update. The header’s checks status opens it too. **Your comments** contains the comments in your review draft.
-- **Posting:** pick the verdict (a hint warns when it disagrees with the blockers still standing), then post. The bottom bar's button names the verdict and posts in one click, with the inline comments you didn't drop. If the PR has new commits since the draft, Post is refused until you move the comments or re-draft (below).
+- **Checks & activity** shows current checks, unresolved review threads, and published reviews and comments. It refreshes when you open the tab; **Refresh** fetches again and the timestamp shows the last successful update. The header’s checks status opens it too. **Your comments** contains the comments in your review draft.
+- **Posting:** pick the verdict (a hint warns when it disagrees with the blockers still standing), then post. The bottom bar's button names the verdict and posts in one click, with the inline comments you didn't drop. **Post & archive** also archives the reviewer's workspace once the review is on GitHub; **Post** keeps it, to go on talking to the reviewer. The workspace stays while an agent there is still working or waiting on a permission prompt. The chat's **Post as …** confirm has the same two buttons. If the PR has new commits since the draft, Post is refused until you move the comments or re-draft (below).
 
-**Opening a review from a workspace.** paseo-prs' **Review** button on a PR row opens this screen for that PR. Other plugins can do the same with `navigation.openPluginScreen({ pluginId: "paseo-inbox", screenId: "review", params: { pr } })`, where `pr` is a PR link or `owner/repo#N` (needs a Paseo host with `openPluginScreen`, the FSH build). It shows the PR's newest review. A PR with no review shows read-only: its description, files (with other reviewers' comments) and GitHub checks and activity, plus **Start review**, which queues one as pasting the link would, and **GitHub ↗**.
+**Opening a review from a workspace.** paseo-prs' **Review** button on a PR row opens this screen for that PR. Other plugins can do the same with `navigation.openPluginScreen({ pluginId: "paseo-inbox", screenId: "review", params: { pr } })`, where `pr` is a PR link or `owner/repo#N` (needs a Paseo host with `openPluginScreen`, the FSH build). It shows the PR's newest review. A PR with no review shows read-only: its description, files (with other reviewers' comments) and GitHub checks and activity, plus **Start review**, which queues one as pasting the link would, and **Open on GitHub ↗**.
 
 ## Re-reviews
 

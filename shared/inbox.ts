@@ -28,6 +28,10 @@ export const draftsReviews = (rule: Rule) => /review/i.test(rule.prompt) || rule
 /** Paseo needs `provider/model`; `paseo provider models <provider>` lists the model ids. */
 const ProviderSchema = z.string().regex(/^[\w-]+\/\S+$/, 'use "provider/model", e.g. "claude/claude-opus-5-5" (see `paseo provider models claude`)');
 
+/** Where a review opens from its chat: a tab in the main view (a sheet on phones), or the workspace's Explorer sidebar. */
+export const ReviewLocationSchema = z.enum(["main", "explorer"]);
+export type ReviewLocation = z.infer<typeof ReviewLocationSchema>;
+
 export const ConfigSchema = z.object({
   pollSeconds: z.number().int().min(60).default(300),
   maxConcurrent: z.number().int().min(1).default(2),
@@ -49,6 +53,7 @@ export const ConfigSchema = z.object({
   trust: z.array(z.string()).default([]),
   /** The rule a pasted PR URL runs; the first rule when unset. */
   manualRule: z.string().optional(),
+  reviewLocation: ReviewLocationSchema.default("main"),
 });
 export type Config = z.infer<typeof ConfigSchema>;
 /** True when nothing is configured yet (the defaults), so a legacy inbox.json may apply instead. */
@@ -161,6 +166,19 @@ export function doneStatus(run: Run): { label: string; tone: DoneTone; detail: s
   return { label: "Done", tone: "muted", detail: reason || null };
 }
 
+export const START_FAILED = "could not start the agent: ";
+
+export const CANCELED = "canceled: ";
+
+/** A failed run's pill: no agent means it never started; a canceled turn isn't a crash. The detail drops what the pill says. */
+export function failureStatus(run: Run): { label: string; tone: DoneTone; detail: string | null } | null {
+  if (run.state !== "failed") return null;
+  const reason = run.reason ?? "";
+  if (reason.startsWith(CANCELED)) return { label: "Canceled", tone: "muted", detail: reason.slice(CANCELED.length) || null };
+  const detail = reason.startsWith(START_FAILED) ? reason.slice(START_FAILED.length) : reason;
+  return { label: run.agentId ? "Agent failed" : "Didn't start", tone: "danger", detail: detail || null };
+}
+
 /** Why a run waits: the repo has no entry under Settings → Inbox → Repos on this machine. */
 export const noCheckoutReason = (repo: string) => `no clone of ${repo} on this machine`;
 
@@ -258,7 +276,8 @@ export function plan({ config, results, state, now }: PlanInput): State {
       else if (dismissed(earlier)) next = null;
       else if (rule.rerun === "once" && earlier.some((run) => !REDECIDED.has(run.state))) next = null;
       // A manual rule's match waits in view for Run now; "skipped" is only for PRs no rule matched.
-      else if (rule.rerun === "manual") next = { ...base, state: "manual", reason: "manual rule: use Run now" };
+      // Only Run now makes a manual rule's run no-checkout, so that one keeps waiting for a clone.
+      else if (rule.rerun === "manual" && existing?.state !== "no-checkout") next = { ...base, state: "manual", reason: "manual rule: use Run now" };
       else if (!checkouts.has(pr.repo.toLowerCase())) next = { ...base, state: "no-checkout", reason: noCheckoutReason(pr.repo) };
       else next = { ...base, state: "queued" };
 
@@ -321,7 +340,8 @@ export function latestRound(state: State, itemKey: string, rule: string, version
 
 /**
  * Back to queued, at the item's current version (Run now / Rerun), in the latest round there. Pass
- * `round` to start another round instead, when the latest one's review was already posted.
+ * `round` to start another round instead, when the latest one's review was already posted. A repo
+ * with no clone on this machine waits as no-checkout: dispatch would fail it.
  */
 export function requeue(state: State, config: Config, itemKey: string, rule: string, now: string, options: { round?: number; reason?: string; source?: string } = {}): State {
   const item = state.items[itemKey];
@@ -332,7 +352,9 @@ export function requeue(state: State, config: Config, itemKey: string, rule: str
   const current = state.runs.find((run) => run.id === id);
   if (current?.state === "running") throw new Error("Already running");
   const source = options.source ?? current?.source ?? config.rules.find((candidate) => candidate.name === rule)!.source;
-  const queued: Run = { id, itemKey, source, rule, version: item.pr.headSha, state: "queued", createdAt: now, updatedAt: now, ...(round > 1 ? { round } : {}), ...(options.reason ? { reason: options.reason } : {}) };
+  const checkout = Object.keys(config.checkouts).some((repo) => repo.toLowerCase() === item.pr.repo.toLowerCase());
+  const reason = checkout ? options.reason : noCheckoutReason(item.pr.repo);
+  const queued: Run = { id, itemKey, source, rule, version: item.pr.headSha, state: checkout ? "queued" : "no-checkout", createdAt: now, updatedAt: now, ...(round > 1 ? { round } : {}), ...(reason ? { reason } : {}) };
   return { ...state, runs: [...state.runs.filter((run) => run.id !== id), queued] };
 }
 
@@ -383,9 +405,7 @@ export function reopen(state: State, config: Config, run: Run, ask: { at: string
   if (run.version === head && draft && !draft.posted) return setRun(state, run.id, { state: "needs-decision", reason: `${why}${DRAFT_BACK}` }, now);
   const atHead = state.runs.some((candidate) => candidate.itemKey === run.itemKey && candidate.rule === run.rule && candidate.version === head);
   const round = atHead ? latestRound(state, run.itemKey, run.rule, head) + 1 : 1;
-  const next = requeue(state, config, run.itemKey, run.rule, now, { round, reason: why, source: run.source });
-  const checkout = Object.keys(config.checkouts).some((repo) => repo.toLowerCase() === item.pr.repo.toLowerCase());
-  return checkout ? next : setRun(next, runId(run.itemKey, run.rule, head, round), { state: "no-checkout", reason: noCheckoutReason(item.pr.repo) }, now);
+  return requeue(state, config, run.itemKey, run.rule, now, { round, reason: why, source: run.source });
 }
 
 /**
@@ -448,6 +468,8 @@ export const InboxViewSchema = z.object({
   postable: z.record(z.string(), VerdictSchema).optional(),
   /** The signed-in GitHub login, once known: the list marks the PRs it authored and filters by them. */
   me: z.string().optional(),
+  /** The `reviewLocation` setting, so the client opens reviews where the human chose. */
+  reviewLocation: ReviewLocationSchema.optional(),
 });
 export type InboxView = z.infer<typeof InboxViewSchema>;
 

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { Inbox, type InboxDeps, type StartRequest } from "../server/inbox";
-import { type Pr, type State } from "../shared/inbox";
+import { runId, type Pr, type State } from "../shared/inbox";
 import { config, emptyState, later, NOW, pr } from "./fixtures";
 
 function harness(results: Record<string, Pr[]> = {}, overrides: Partial<InboxDeps> = {}) {
@@ -225,6 +225,31 @@ describe("Inbox", () => {
     await expect(inbox.skip("acme/shop#7", "draft-review")).rejects.toThrow("It's running");
   });
 
+  it("Run now on a repo with no clone here waits for one instead of failing", async () => {
+    const other = pr({ repo: "acme/api" });
+    const state: State = {
+      items: { [other.key]: { pr: other, sources: ["review"], lastSeenAt: NOW } },
+      runs: [{ id: runId(other.key, "draft-review", other.headSha), itemKey: other.key, source: "review", rule: "draft-review", version: other.headSha, state: "failed", reason: "no checkout", updatedAt: NOW }],
+    };
+    const { inbox, started, saved } = harness({}, { load: () => state });
+    await inbox.runNow(other.key, "draft-review");
+    expect(started).toEqual([]);
+    expect(saved().runs).toMatchObject([{ state: "no-checkout", reason: "no clone of acme/api on this machine" }]);
+  });
+
+  it("a queued run whose clone went before it started waits for one instead of failing", async () => {
+    let current = config();
+    let ready = false;
+    const { inbox, started, saved } = harness({ review: [pr()] }, { loadConfig: () => current, ready: () => ready });
+    await inbox.poll();
+    expect(saved().runs[0]!.state).toBe("queued");
+    current = config({ checkouts: {} });
+    ready = true;
+    await inbox.poll();
+    expect(started).toEqual([]);
+    expect(saved().runs[0]).toMatchObject({ state: "no-checkout", reason: "no clone of acme/shop on this machine" });
+  });
+
   it("Dismiss archives the workspaces of that item's runs", async () => {
     const archived: string[] = [];
     const { inbox } = harness({ review: [pr()] }, { archive: async (id) => void archived.push(id) });
@@ -232,6 +257,38 @@ describe("Inbox", () => {
     inbox.turnEnded("agent-1", { kind: "completed" });
     await inbox.skip("acme/shop#7", "draft-review");
     expect(archived).toEqual(["ws"]);
+  });
+
+  it("archives a posted run's workspace, but keeps it while an agent there works or waits on a permission", async () => {
+    const archived: string[] = [];
+    let status: string | null = "running";
+    const { inbox, saved } = harness({ review: [pr()] }, { archive: async (id) => void archived.push(id), workspaceStatus: async () => status });
+    await inbox.poll();
+    inbox.turnEnded("agent-1", { kind: "completed" });
+    const id = saved().runs[0]!.id;
+    expect(await inbox.archiveRun(id)).toBe("an agent there is still working");
+    status = "needs_input";
+    expect(await inbox.archiveRun(id)).toBe("an agent there is still working");
+    expect(archived).toEqual([]);
+    status = "done";
+    expect(await inbox.archiveRun(id)).toBeNull();
+    expect(archived).toEqual(["ws"]);
+  });
+
+  it("doesn't archive a posted run's workspace that is already gone, or one it never had", async () => {
+    const archive = vi.fn(async () => {});
+    const { inbox, saved } = harness({ review: [pr()] }, { archive, workspaceStatus: async () => null });
+    await inbox.poll();
+    expect(await inbox.archiveRun(saved().runs[0]!.id)).toBeNull();
+    expect(await inbox.archiveRun("unknown")).toBe("this review has no workspace to archive");
+    expect(archive).not.toHaveBeenCalled();
+  });
+
+  it("returns from archiving a posted run's workspace without waiting for the worktree to go", async () => {
+    const { inbox, saved } = harness({ review: [pr()] }, { archive: () => new Promise(() => {}), workspaceStatus: async () => "done" });
+    await inbox.poll();
+    inbox.turnEnded("agent-1", { kind: "completed" });
+    expect(await inbox.archiveRun(saved().runs[0]!.id)).toBeNull();
   });
 
   it("Dismiss returns without waiting for the worktrees to archive", async () => {
