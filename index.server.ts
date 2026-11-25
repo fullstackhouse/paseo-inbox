@@ -301,14 +301,15 @@ export default function contribute(server: PluginServerContext) {
   server.on("agent.closed", ({ agent }) => inbox.agentGone(agent.id));
   server.on("agent.archived", ({ agent }) => inbox.agentGone(agent.id));
 
+  const view = () => ({ ...inbox.view(), reviewLocation: fromSettings?.reviewLocation ?? "main" });
   server.handle(listInbox, (_input, { paseo: api }) => {
     capture(api);
-    return inbox.view();
+    return view();
   });
   server.handle(pollNow, async (_input, { paseo: api }) => {
     capture(api);
     await inbox.poll();
-    return inbox.view();
+    return view();
   });
   server.handle(runNow, async ({ itemKey, rule }, { paseo: api }) => {
     capture(api);
