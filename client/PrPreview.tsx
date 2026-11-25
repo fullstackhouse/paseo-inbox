@@ -28,7 +28,7 @@ const READ_ONLY: DiffActions = {
 
 /**
  * A PR opened by link that has no review yet: its description and diff, read-only, with Start review
- * and GitHub. Starting a review swaps this for the full review screen.
+ * and Open on GitHub. Starting a review swaps this for the full review screen.
  */
 export function PrPreview(props: {
   theme: PluginTheme;
@@ -114,7 +114,7 @@ export function PrPreview(props: {
           <Deployments theme={theme} entries={deployments.data} onOpen={openUrl} />
           <View style={{ flexDirection: "row", gap: 8, flexWrap: "wrap" }}>
             <Chip theme={theme} active label={props.starting ? "Starting…" : "Start review"} disabled={props.starting} onPress={props.onStart} />
-            {preview ? <Chip theme={theme} label="GitHub ↗" onPress={() => openUrl(preview.url)} /> : null}
+            {preview ? <Chip theme={theme} label="Open on GitHub ↗" onPress={() => openUrl(preview.url)} /> : null}
           </View>
           {props.error ? <Text style={{ color: theme.colors.statusDanger, fontSize: 13 }}>{props.error}</Text> : null}
         </View>
@@ -123,7 +123,7 @@ export function PrPreview(props: {
           <View style={{ flexDirection: "row", gap: 6, paddingHorizontal: pad, paddingVertical: 8, justifyContent: compact ? "flex-start" : "center" }}>
             <Chip theme={theme} label="Description" active={tab === "description"} onPress={() => setTab("description")} />
             <Chip theme={theme} label={details ? `Files ${files.length}` : "Files"} active={tab === "files"} onPress={() => setTab("files")} />
-            <Chip theme={theme} label="GitHub" active={tab === "github"} onPress={() => setTab("github")} />
+            <Chip theme={theme} label="Checks & activity" active={tab === "github"} onPress={() => setTab("github")} />
           </View>
         </View>
 
