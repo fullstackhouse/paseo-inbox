@@ -496,7 +496,7 @@ export function ReviewScreen({ theme, layout, navigation, params, setTitle }: Pl
     ...(since && since.kind !== "none" ? [{ id: "since" as const, label: `Since ${since.base.slice(0, 7)}${since.kind === "changes" ? ` · ${since.files.length}` : ""}` }] : []),
     { id: "files", label: `Files ${details ? files.length : pr.files.length}` },
     { id: "description", label: "Description" },
-    { id: "github", label: "GitHub" },
+    { id: "github", label: "Checks & activity" },
     { id: "comments", label: `Your comments ${live.length}` },
     ...(draft && !draft.postedUrl ? [{ id: "preview" as const, label: draft.bodyOverride !== undefined ? "Preview (edited)" : "Preview" }] : []),
   ];
@@ -650,7 +650,7 @@ export function ReviewScreen({ theme, layout, navigation, params, setTitle }: Pl
             {run.trusted === false ? <Pill theme={theme} color={theme.colors.statusWarning}>read-only run: author not trusted</Pill> : null}
             {details?.threads.length ? <Pill theme={theme} color={theme.colors.foregroundMuted}>{details.threads.length} comments from others</Pill> : null}
             <View style={{ flex: 1 }} />
-            <Chip theme={theme} label="GitHub ↗" onPress={() => openUrl(pr.url)} />
+            <Chip theme={theme} label="Open on GitHub ↗" onPress={() => openUrl(pr.url)} />
             {run.agentId && navigation ? <Chip theme={theme} label="Reviewer chat" onPress={() => openReviewerChat(navigation, { ...run, agentId: run.agentId! }, layout.compact)} /> : null}
           </View>
           {stale && run.state !== "running" ? (
