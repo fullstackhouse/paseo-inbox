@@ -45,15 +45,46 @@ export interface SinceDeps {
   compare: (repo: string, base: string, head: string) => Promise<Compare | null>;
   /** Makes a compare that hit GitHub's 300-file cap whole for the PR's files; null when it can't. */
   complete?: (repo: string, base: string, head: string, compare: Compare, prPaths: ReadonlySet<string>) => Promise<Compare | null>;
-  /** The PR's own commits, so the base branch's ones a merge brought in don't count. */
-  ownCommits?: (repo: string, number: number) => Promise<Set<string>>;
+  /** The PR's own commits, so the base branch's ones a merge brought in don't count; undefined = don't filter. */
+  ownCommits?: (repo: string, number: number) => Promise<Set<string> | undefined>;
+  /** Finished compares by repo, base and head. */
+  cache?: CompareCache;
 }
 
-/** `base...head`, made whole when GitHub's list hit its cap (still `truncated` if that fails). */
+/**
+ * Compares by `repo|base|head`, least recently used out first. Both commits are fixed, so a finished
+ * result never goes stale; keeping it spares GitHub's rate limit the compares, trees and blobs a recap
+ * would otherwise redo on every screen open and `inbox_pr` call.
+ */
+export class CompareCache {
+  private readonly entries = new Map<string, Compare | null>();
+  constructor(private readonly max = 100) {}
+  has(key: string) {
+    return this.entries.has(key);
+  }
+  get(key: string): Compare | null | undefined {
+    if (!this.entries.has(key)) return undefined;
+    const value = this.entries.get(key)!;
+    this.entries.delete(key);
+    this.entries.set(key, value);
+    return value;
+  }
+  set(key: string, value: Compare | null) {
+    this.entries.delete(key);
+    this.entries.set(key, value);
+    if (this.entries.size > this.max) this.entries.delete(this.entries.keys().next().value!);
+  }
+}
+
+/** `base...head`, made whole when GitHub's list hit its cap (still `truncated` if that fails, and then not cached, so it's tried again). */
 async function compareFor(deps: SinceDeps, repo: string, base: string, live: PrDetails, prPaths: ReadonlySet<string>): Promise<Compare | null> {
-  const compare = await deps.compare(repo, base, live.headSha);
-  if (!compare?.truncated || !deps.complete) return compare;
-  return (await deps.complete(repo, base, live.headSha, compare, prPaths).catch(() => null)) ?? compare;
+  const key = `${repo}|${base}|${live.headSha}`;
+  const cached = deps.cache?.get(key);
+  if (cached !== undefined) return cached;
+  let compare = await deps.compare(repo, base, live.headSha);
+  if (compare?.truncated && deps.complete) compare = (await deps.complete(repo, base, live.headSha, compare, prPaths).catch(() => null)) ?? compare;
+  if (!compare?.truncated) deps.cache?.set(key, compare);
+  return compare;
 }
 
 /** "Changes since my last review" for a run's PR: what changed between the commit the human last reviewed and the live head. */

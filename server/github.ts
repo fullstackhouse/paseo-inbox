@@ -333,10 +333,17 @@ export async function completeCompare(repo: string, base: string, head: string, 
   return { ...compare, files, truncated: false, totalFiles: changed.length };
 }
 
-/** The PR's own commits (not the base branch's ones a merge brought in), newest 250 as GitHub lists them. */
-export async function prCommits(repo: string, number: number, run: Gh = gh): Promise<Set<string>> {
+/** GitHub lists at most this many of a PR's commits: the oldest ones. */
+const PR_COMMIT_CAP = 250;
+
+/**
+ * The PR's own commits (not the base branch's ones a merge brought in). Undefined once the list is full:
+ * GitHub's 250 are the oldest, so newer commits would be missing and nothing should be filtered by it.
+ */
+export async function prCommits(repo: string, number: number, run: Gh = gh): Promise<Set<string> | undefined> {
   const pages = await run(["api", "--paginate", "--slurp", `repos/${repo}/pulls/${number}/commits?per_page=100`]);
-  return new Set(z.array(z.array(z.object({ sha: z.string() }))).parse(JSON.parse(pages)).flat().map((commit) => commit.sha));
+  const shas = z.array(z.array(z.object({ sha: z.string() }))).parse(JSON.parse(pages)).flat().map((commit) => commit.sha);
+  return shas.length >= PR_COMMIT_CAP ? undefined : new Set(shas);
 }
 
 const ReviewSchema = z.object({

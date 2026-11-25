@@ -2,10 +2,10 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { compareCommits, completeCompare, latestReviewBy, reviewRequests, reviewsBy } from "../server/github";
+import { compareCommits, completeCompare, latestReviewBy, prCommits, reviewRequests, reviewsBy } from "../server/github";
 import { Inbox, type InboxDeps } from "../server/inbox";
 import { postDraft } from "../server/post";
-import { filesAt, reanchorRun, recapRun, sinceRun } from "../server/rereview";
+import { CompareCache, filesAt, reanchorRun, recapRun, sinceRun } from "../server/rereview";
 import { ReviewStore } from "../server/reviews";
 import { callTool } from "../server/tools";
 import { DISMISSED, plan, reopen, runId, setRun, type Pr, type State } from "../shared/inbox";
@@ -554,5 +554,35 @@ describe("GitHub's 300-file compare cap", () => {
     const fixed = await recapRun(inbox, reviews, id, { ...deps, complete });
     expect(fixed).toMatchObject({ since: { kind: "changes", hidden: 899 }, comments: [{ status: "fixed", why: "changed" }] });
     expect(fixed.since).not.toHaveProperty("incomplete");
+  });
+});
+
+describe("review feedback: commit cap and compare cache", () => {
+  it("doesn't filter by the PR's commits once GitHub's 250-commit list is full", async () => {
+    const page = (count: number) => JSON.stringify([Array.from({ length: count }, (_, index) => ({ sha: `c${index}` }))]);
+    expect((await prCommits("acme/shop", 7, async () => page(3)))?.size).toBe(3);
+    expect(await prCommits("acme/shop", 7, async () => page(250))).toBeUndefined();
+  });
+
+  it("caches whole compares by repo, base and head, bounded, and retries ones it couldn't complete", async () => {
+    const { inbox, reviews, runId: id } = await drafted();
+    const compare = vi.fn(async (): Promise<Compare> => ({ status: "ahead", behindBy: 0, commits: [], files: [file(OLD)], truncated: true }));
+    let completes = false;
+    const complete = vi.fn(async (_repo: string, _base: string, _head: string, partial: Compare) => (completes ? { ...partial, truncated: false, totalFiles: 1 } : null));
+    const cache = new CompareCache(2);
+    const deps = { details: async () => details(A, [file(OLD)]), me: async () => "jacek", latestReview: async () => ({ commit: "ppppppp000", at: NOW, url: "u" }), compare, complete, cache, threads: async () => [], reviewsBy: async () => [] };
+    await recapRun(inbox, reviews, id, deps);
+    await recapRun(inbox, reviews, id, deps);
+    expect(compare).toHaveBeenCalledTimes(2); // incomplete: not kept
+    completes = true;
+    await recapRun(inbox, reviews, id, deps);
+    await recapRun(inbox, reviews, id, deps);
+    expect(compare).toHaveBeenCalledTimes(3);
+    expect(complete).toHaveBeenCalledTimes(3);
+    // Bounded: the oldest entry goes first.
+    cache.set("a", null);
+    cache.set("b", null);
+    expect(cache.has("acme/shop|ppppppp000|" + A)).toBe(false);
+    expect(cache.has("a") && cache.has("b")).toBe(true);
   });
 });

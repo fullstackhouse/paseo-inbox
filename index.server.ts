@@ -8,7 +8,7 @@ import { openInBrowser } from "./server/open";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { compareCommits, completeCompare, ghWithInput, GithubMembership, GithubSource, latestReviewBy, postPullReview, prCommits, prOutcome, PrDetailsCache, reviewRequests, reviewsBy, whoami } from "./server/github";
-import { filesAt, reanchorRun, recapRun, sinceRun } from "./server/rereview";
+import { CompareCache, filesAt, reanchorRun, recapRun, sinceRun } from "./server/rereview";
 import { priorSection, reviewRecap } from "./shared/recap";
 import { reanchorReview, reviewSince, type Compare } from "./shared/rereview";
 import { Inbox, type StartRequest } from "./server/inbox";
@@ -157,6 +157,7 @@ export default function contribute(server: PluginServerContext) {
     compare,
     complete: (repo: string, base: string, head: string, partial: Compare, prPaths: ReadonlySet<string>) => completeCompare(repo, base, head, partial, prPaths),
     ownCommits: (repo: string, number: number) => prCommits(repo, number),
+    cache: new CompareCache(),
   };
   const recapDeps = { ...sinceDeps, threads: (repo: string, number: number) => fetchThreads(repo, number), reviewsBy: (repo: string, number: number, who: string) => reviewsBy(repo, number, who) };
   const draftFilesAt = filesAt((repo, number, sha) => prDetails.cachedFiles(repo, number, sha), compare);
