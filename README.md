@@ -21,7 +21,7 @@ Paseo shows an **Inbox** row in the sidebar, with the number of runs waiting on 
 
 **Settings → Plugins → paseo-inbox → Settings** (or "Inbox settings" in the Command Center). The settings live in Paseo's own store on the host:
 - **Running**, how often to check GitHub, how many reviewers run at once, the model, and the mode.
-- **Open reviews in**: the main view (default; a sheet on phones) or the workspace's Explorer sidebar, beside the chat. Shown on Paseo builds that support Explorer tabs.
+- **Open reviews in**: the main view (default; a sheet on phones) or the workspace's Explorer sidebar, beside the chat. Shown on Paseo builds that support Explorer tabs. Set it here only; a `reviewLocation` in `inbox.json` is ignored.
 - **Trust** rules.
 - Local checkouts, one per line.
 - Sources and rules, as JSON.

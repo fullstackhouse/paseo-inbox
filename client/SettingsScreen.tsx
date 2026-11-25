@@ -86,10 +86,11 @@ function Form({ settings, theme }: { settings: Ready; theme: PluginSurfaceProps[
               options={REVIEW_LOCATIONS}
               disabled={settings.saving}
               onValueChange={(reviewLocation) => {
-                save({ reviewLocation });
-                // The shared view carries it to the pills; apply it now instead of on the next refresh.
-                const view = snapshot();
-                if (view) publish({ ...view, reviewLocation });
+                // The shared view carries it to the pills; once saved, apply it now instead of on the next refresh.
+                void settings.save({ ...values, reviewLocation }, settings.revision).then((saved) => {
+                  const view = snapshot();
+                  if (saved && view) publish({ ...view, reviewLocation });
+                });
               }}
             />
           ) : null}
