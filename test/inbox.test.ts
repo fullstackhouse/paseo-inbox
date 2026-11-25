@@ -304,13 +304,13 @@ describe("reviewPill", () => {
   const run = (id: string, patch: Partial<Run>): Run => ({ id, itemKey: "o/r#1", source: "review", rule: "draft-review", version: "a", state: "needs-decision", agentId: "agent", workspaceId: "w", updatedAt: NOW, ...patch });
 
   it("opens the drafted review, then marks it posted", () => {
-    expect(reviewPill([run("r", { reason: "review drafted: request-changes · 70% · 1 blocker" })], null, "agent")).toEqual({ runId: "r", posted: false, postAs: null });
-    expect(reviewPill([run("r", { state: "done", reason: "review posted: https://x" })], null, "agent")).toEqual({ runId: "r", posted: true, postAs: null });
+    expect(reviewPill([run("r", { reason: "review drafted: request-changes · 70% · 1 blocker" })], null, "agent")).toEqual({ runId: "r", posted: false, postAs: null, cantPost: "the draft isn't ready yet" });
+    expect(reviewPill([run("r", { state: "done", reason: "review posted: https://x" })], null, "agent")).toEqual({ runId: "r", posted: true, postAs: null, cantPost: null });
   });
 
   it("offers posting only while the server lists the draft as postable, with its verdict", () => {
     const drafted = run("r", { reason: "review drafted: request-changes · 70% · 1 blocker" });
-    expect(reviewPill([drafted], { postable: { r: "comment" } }, "agent")).toEqual({ runId: "r", posted: false, postAs: "comment" });
+    expect(reviewPill([drafted], { postable: { r: "comment" } }, "agent")).toEqual({ runId: "r", posted: false, postAs: "comment", cantPost: null });
     expect(reviewPill([drafted], { postable: { other: "approve" } }, "agent")?.postAs).toBeNull();
     // A posted run never offers posting again, whatever a stale view says.
     expect(reviewPill([run("r", { state: "done", reason: "review posted: https://x" })], { postable: { r: "approve" } }, "agent")?.postAs).toBeNull();
@@ -325,17 +325,30 @@ describe("reviewPill", () => {
   it("opens a dismissed draft that is still saved", () => {
     const dismissed = run("r", { state: "done", reason: DISMISSED });
     expect(reviewPill([dismissed], { drafts: [] }, "agent")).toBeNull();
-    expect(reviewPill([dismissed], { drafts: ["r"] }, "agent")).toEqual({ runId: "r", posted: false, postAs: null });
+    expect(reviewPill([dismissed], { drafts: ["r"] }, "agent")).toEqual({ runId: "r", posted: false, postAs: null, cantPost: "dismissed" });
   });
 
   it("comes back with the unposted draft when the review is requested again", () => {
-    expect(reviewPill([run("r", { reason: "review requested again by @dana: your draft is back" })], null, "agent")).toEqual({ runId: "r", posted: false, postAs: null });
+    expect(reviewPill([run("r", { reason: "review requested again by @dana: your draft is back" })], null, "agent")).toEqual({ runId: "r", posted: false, postAs: null, cantPost: "the draft isn't ready yet" });
     expect(reviewPill([run("r", { state: "queued", reason: "review requested again by @dana" })], null, "agent")).toBeNull();
   });
 
   it("follows the agent's latest run when its review moved to a new head", () => {
     const runs = [run("old", { state: "done", reason: "comments moved to bbbbbbb" }), run("new", { reason: "review moved to bbbbbbb from aaaaaaa" })];
-    expect(reviewPill(runs, null, "agent")).toEqual({ runId: "new", posted: false, postAs: null });
+    expect(reviewPill(runs, null, "agent")).toEqual({ runId: "new", posted: false, postAs: null, cantPost: "the draft isn't ready yet" });
+  });
+
+  it("says why a draft can't be posted instead of hiding Post", () => {
+    const stale = run("old", { state: "stale", reason: "new push bbbbbbb" });
+    const view = { drafts: ["old"] };
+    const why = (...later: Run[]) => reviewPill([stale, ...later], view, "agent")?.cantPost;
+    expect(why()).toBe("the PR moved on (new push bbbbbbb)");
+    expect(why(run("new", { version: "b", agentId: "next", state: "running" }))).toBe("a newer review is being drafted");
+    expect(why(run("new", { version: "b", agentId: "next", reason: "review drafted: approve · 90%" }))).toBe("a newer draft is waiting");
+    expect(why(run("new", { version: "b", agentId: "next", state: "done", reason: "review posted: https://x" }))).toBe("a newer review is posted");
+    // Another rule's run on the same PR is a different review.
+    expect(why(run("qa", { rule: "qa", agentId: "next", state: "done", reason: "review posted: https://x" }))).toBe("the PR moved on (new push bbbbbbb)");
+    expect(reviewPill([run("r", { state: "done", reason: "reviewed on GitHub" })], { drafts: ["r"] }, "agent")?.cantPost).toBe("reviewed on GitHub");
   });
 });
 
