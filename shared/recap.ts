@@ -2,7 +2,7 @@ import { defineRpc } from "@getpaseo/plugin";
 import { z } from "zod";
 import { parsePatch } from "./diff";
 import { SinceSchema, type MyReview, type Since } from "./rereview";
-import { RecapInputSchema, type RecapInput } from "./review";
+import { RecapInputSchema, type PrFile, type RecapInput } from "./review";
 import type { PrUpstream } from "./upstream";
 
 // ---------- "Since your review": what happened to the human's last review ----------
@@ -66,27 +66,37 @@ function changesLines(patch: string | undefined, side: "old" | "new", from: numb
   return false;
 }
 
-/**
- * Did the diff since the last review change the lines this thread is on? Lines written at the since
- * base are read on the diff's old side; others by GitHub's current line on its new side. A comment on the
- * whole file counts any change to the file. Without a clean diff (rewritten history) nothing counts.
- */
-export function touchedSince(thread: Thread, since: Since): boolean {
-  if (since.kind !== "changes") return false;
-  const file = since.files.find((candidate) => candidate.path === thread.path || candidate.previousPath === thread.path);
+/** Diffs from a commit to the head (the PR's files only), keyed by that commit: for threads written before the since base. */
+export type DiffsFrom = ReadonlyMap<string, readonly PrFile[]>;
+
+function touchedIn(thread: Thread, files: readonly PrFile[], side: "old" | "new"): boolean {
+  const file = files.find((candidate) => candidate.path === thread.path || candidate.previousPath === thread.path);
   if (!file) return false;
   if (file.status === "removed") return true;
   if (thread.side === "LEFT") return false;
-  if (thread.commit === since.base && thread.originalLine != null) return changesLines(file.patch, "old", thread.originalStartLine ?? thread.originalLine, thread.originalLine);
+  if (side === "old" && thread.originalLine != null) return changesLines(file.patch, "old", thread.originalStartLine ?? thread.originalLine, thread.originalLine);
   if (thread.line != null) return changesLines(file.patch, "new", thread.startLine ?? thread.line, thread.line);
   return thread.originalLine == null && !thread.outdated;
 }
 
+/**
+ * Did the code change on the lines this thread is on since it was written? Read on the old side of the
+ * diff from the thread's own commit when that diff is known (`diffs`, or the since diff when the thread
+ * was written at its base), else by GitHub's current line on the since diff's new side. A comment on the
+ * whole file counts any change to the file. Without a clean diff (rewritten history) nothing counts.
+ */
+export function touchedSince(thread: Thread, since: Since, diffs: DiffsFrom = new Map()): boolean {
+  const own = thread.commit ? diffs.get(thread.commit) : undefined;
+  if (own) return touchedIn(thread, own, "old");
+  if (since.kind !== "changes") return false;
+  return touchedIn(thread, since.files, thread.commit === since.base ? "old" : "new");
+}
+
 /** What happened to one of the human's threads, worked out without reading the code. */
-export function threadStatus(thread: Thread, me: string, since: Since): RecapComment {
+export function threadStatus(thread: Thread, me: string, since: Since, diffs?: DiffsFrom): RecapComment {
   const [first, ...rest] = thread.comments;
   const reply = rest.filter((comment) => !same(comment.author, me) && !isBot(comment.author)).at(-1) ?? null;
-  const changed = touchedSince(thread, since);
+  const changed = touchedSince(thread, since, diffs);
   const status: ThreadStatus = thread.resolved || changed ? "fixed" : thread.outdated ? "outdated" : reply ? "pushed-back" : "unanswered";
   return {
     thread: thread.id,
@@ -103,8 +113,15 @@ export function threadStatus(thread: Thread, me: string, since: Since): RecapCom
 
 const ATTENTION: Record<ThreadStatus, number> = { "pushed-back": 0, unanswered: 1, outdated: 2, fixed: 3 };
 
+/** Commits that open threads of the human's were written on, other than the since base: their diffs to the head say whether those changed. */
+export function threadCommits(threads: readonly Thread[], me: string, since: Since, max = 5): string[] {
+  const base = since.kind === "none" ? null : since.base;
+  const commits = threads.filter((thread) => same(thread.comments[0]?.author, me) && !thread.resolved && thread.commit && thread.commit !== base).map((thread) => thread.commit!);
+  return [...new Set(commits)].slice(0, max);
+}
+
 /** The recap: the human's past reviews (with how many comments each left) and their threads, those needing them first. */
-export function buildRecap(since: Since, threads: readonly Thread[], reviews: readonly MyReview[], me: string, ai: RecapInput | null): Recap {
+export function buildRecap(since: Since, threads: readonly Thread[], reviews: readonly MyReview[], me: string, ai: RecapInput | null, diffs?: DiffsFrom): Recap {
   if (since.kind === "none") return { since, reviews: [], comments: [], ai: null };
   const written = threads.flatMap((thread) => thread.comments).filter((comment) => same(comment.author, me));
   const past = reviews.map((review) => ({
@@ -117,7 +134,7 @@ export function buildRecap(since: Since, threads: readonly Thread[], reviews: re
   }));
   const comments = threads
     .filter((thread) => same(thread.comments[0]?.author, me))
-    .map((thread) => threadStatus(thread, me, since))
+    .map((thread) => threadStatus(thread, me, since, diffs))
     .sort((a, b) => ATTENTION[a.status] - ATTENTION[b.status]);
   return { since, reviews: past, comments, ai };
 }
@@ -125,6 +142,14 @@ export function buildRecap(since: Since, threads: readonly Thread[], reviews: re
 export const STATUS_LABEL: Record<ThreadStatus, string> = { fixed: "Fixed", "pushed-back": "Pushed back", unanswered: "Unanswered", outdated: "Outdated" };
 export const REVIEW_STATE: Record<string, string> = { APPROVED: "approved", CHANGES_REQUESTED: "changes requested", COMMENTED: "commented", DISMISSED: "dismissed" };
 export const ADDRESSED_LABEL: Record<RecapInput["comments"][number]["addressed"], string> = { yes: "Addressed", partly: "Partly addressed", no: "Not addressed" };
+
+/** A comment as one plain line for a list: no grade badge (`⚠️ **minor** — `), emphasis or code ticks. */
+export const preview = (body: string) =>
+  body
+    .replace(/^\s*\S+ \*\*(blocker|minor|major|nit)\*\* — /u, "")
+    .replace(/\*\*|__|`/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
 
 /** The reviewer's other changes, logic before mechanical (stable within each). */
 export const triage = <T extends { risk: "logic" | "mechanical" }>(changes: readonly T[]): T[] => [...changes].sort((a, b) => (a.risk === b.risk ? 0 : a.risk === "logic" ? -1 : 1));

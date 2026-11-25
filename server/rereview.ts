@@ -1,5 +1,5 @@
 import { runId as makeRunId } from "../shared/inbox";
-import { buildRecap, type Recap, type Thread } from "../shared/recap";
+import { buildRecap, threadCommits, type Recap, type Thread } from "../shared/recap";
 import { reanchorDraft, sinceBase, sinceChanges, type Compare, type MyReview, type Since } from "../shared/rereview";
 import type { PrDetails, PrFile } from "../shared/review";
 import type { Inbox } from "./inbox";
@@ -47,6 +47,10 @@ export interface SinceDeps {
 
 /** "Changes since my last review" for a run's PR: what changed between the commit the human last reviewed and the live head. */
 export async function sinceRun(inbox: Inbox, reviews: ReviewStore, runId: string, deps: SinceDeps): Promise<Since> {
+  return (await sinceFor(inbox, reviews, runId, deps)).since;
+}
+
+async function sinceFor(inbox: Inbox, reviews: ReviewStore, runId: string, deps: SinceDeps): Promise<{ since: Since; live: PrDetails }> {
   const run = inbox.run(runId);
   const item = run ? inbox.item(run.itemKey) : null;
   if (!run || !item) throw new Error("Unknown run");
@@ -58,7 +62,14 @@ export async function sinceRun(inbox: Inbox, reviews: ReviewStore, runId: string
   const mine = me ? await deps.latestReview(item.pr.repo, item.pr.number, me).catch(() => null) : null;
   const base = fromDraft ?? sinceBase(draft, live.headSha, mine);
   const compare = base && base.sha !== live.headSha ? await deps.compare(item.pr.repo, base.sha, live.headSha) : null;
-  return sinceChanges(base, live.headSha, compare, new Set(live.files.map((file) => file.path)));
+  return { since: sinceChanges(base, live.headSha, compare, new Set(live.files.map((file) => file.path))), live };
+}
+
+/** A clean diff from `base` to the head, with the PR's files only; null for rewritten history or a failed read. */
+async function cleanDiff(deps: SinceDeps, repo: string, base: string, live: PrDetails): Promise<PrFile[] | null> {
+  const compare = await deps.compare(repo, base, live.headSha).catch(() => null);
+  const since = sinceChanges({ sha: base, from: "posted" }, live.headSha, compare, new Set(live.files.map((file) => file.path)));
+  return since.kind === "changes" ? since.files : since.kind === "same" ? [] : null;
 }
 
 export interface RecapDeps extends SinceDeps {
@@ -72,14 +83,16 @@ export interface RecapDeps extends SinceDeps {
  * prior review; if that read fails, the since diff still comes back, with the error.
  */
 export async function recapRun(inbox: Inbox, reviews: ReviewStore, runId: string, deps: RecapDeps): Promise<Recap> {
-  const since = await sinceRun(inbox, reviews, runId, deps);
+  const { since, live } = await sinceFor(inbox, reviews, runId, deps);
   if (since.kind === "none") return buildRecap(since, [], [], "", null);
   const pr = inbox.item(inbox.run(runId)!.itemKey)!.pr;
   const ai = reviews.get(runId)?.recap ?? null;
   try {
     const me = await deps.me();
     const [threads, mine] = await Promise.all([deps.threads(pr.repo, pr.number), deps.reviewsBy(pr.repo, pr.number, me)]);
-    return buildRecap(since, threads, mine, me, ai);
+    // Threads from earlier rounds are judged by the diff since their own commit, not just since the last review.
+    const diffs = new Map((await Promise.all(threadCommits(threads, me, since).map(async (commit) => [commit, await cleanDiff(deps, pr.repo, commit, live)] as const))).flatMap(([commit, files]) => (files ? [[commit, files] as const] : [])));
+    return buildRecap(since, threads, mine, me, ai, diffs);
   } catch (error) {
     return { since, reviews: [], comments: [], ai, error: `Couldn't read your earlier comments: ${error instanceof Error ? error.message : String(error)}` };
   }

@@ -9,7 +9,7 @@ import { filesAt, reanchorRun, recapRun, sinceRun } from "../server/rereview";
 import { ReviewStore } from "../server/reviews";
 import { callTool } from "../server/tools";
 import { DISMISSED, plan, reopen, runId, setRun, type Pr, type State } from "../shared/inbox";
-import { buildRecap, lookLabel, priorSection, RecapSchema, threadStatus, touchedSince, triage, type Thread } from "../shared/recap";
+import { buildRecap, lookLabel, preview, priorSection, RecapSchema, threadCommits, threadStatus, touchedSince, triage, type Thread } from "../shared/recap";
 import { anchorAt, askedAgain, locate, reanchorDraft, sideLines, sinceBase, sinceChanges, type Compare, type ReviewRequest, type Since } from "../shared/rereview";
 import { composeReview, effectiveVerdict, RecapInputSchema, toDraft, updateComment, ReviewInputSchema, type PrDetails, type PrFile } from "../shared/review";
 import { config, emptyState, later, NOW, pr } from "./fixtures";
@@ -337,6 +337,15 @@ describe("since your review: recap", () => {
     expect(touchedSince(thread("t", { commit: A, originalLine: 4 }), { kind: "rewritten", base: A, from: "posted", why: "diverged" })).toBe(false);
   });
 
+  it("judges a thread from an earlier round by the diff since its own commit", () => {
+    const earlier = thread("t", { commit: "old", originalLine: 4, line: 9 });
+    expect(touchedSince(earlier, { kind: "same", base: A, from: "posted" })).toBe(false);
+    expect(touchedSince(earlier, { kind: "same", base: A, from: "posted" }, new Map([["old", [changed]]]))).toBe(true);
+    expect(touchedSince(earlier, changes, new Map([["old", []]]))).toBe(false);
+    const threads = [earlier, thread("base", { commit: A }), thread("done", { commit: "x", resolved: true }), thread("again", { commit: "old" }), thread("other", { commit: "y", comments: [comment("kuba", "Hi", 1)] })];
+    expect(threadCommits(threads, me, changes)).toEqual(["old"]);
+  });
+
   it("says what happened to each of my comments without reading the code", () => {
     const status = (overrides: Partial<Thread>, since: Since = changes) => threadStatus(thread("t", overrides), me, since);
     expect(status({ resolved: true, line: 9, commit: A, originalLine: 9 })).toMatchObject({ status: "fixed", why: "resolved" });
@@ -397,6 +406,8 @@ describe("since your review: recap", () => {
     expect(lookLabel(ai)).toBe("Check 1 thing");
     expect(lookLabel({ ...ai, check: ["x", "y"] })).toBe("Check 2 things");
     expect(lookLabel({ ...ai, look: "full" })).toBe("Full re-look");
+    expect(preview("⚠️ **minor** — A role that calls `createParty`\n\nforgets **it**.")).toBe("A role that calls createParty forgets it.");
+    expect(preview("🎨 **nit** — Rename.")).toBe("Rename.");
   });
 });
 
@@ -409,6 +420,12 @@ describe("recapRun", () => {
     const base = { details: async () => details(A, [file(OLD)]), me: async () => "jacek", compare: async (): Promise<Compare> => ({ status: "ahead", behindBy: 0, commits: [], files: [file(OLD)] }), threads, reviewsBy };
     const recap = await recapRun(inbox, reviews, id, { ...base, latestReview: async () => ({ commit: "ppppppp000", at: NOW, url: "u" }) });
     expect(recap).toMatchObject({ since: { kind: "changes" }, reviews: [{ comments: 1 }], comments: [{ status: "fixed" }], ai: { look: "full" } });
+    // An open thread from an earlier round: compared from its own commit too.
+    const compare = vi.fn(async (_repo: string, from: string): Promise<Compare> => ({ status: "ahead", behindBy: 0, commits: [], files: from === "eeeeeee999" ? [{ ...file(OLD), status: "modified", patch: "@@ -4,1 +4,1 @@\n-  return 0;\n+  return sum(items);" }] : [] }));
+    threads.mockResolvedValueOnce([{ id: "t2", path: PATH, line: 4, resolved: false, outdated: false, commit: "eeeeeee999", originalLine: 4, comments: [{ id: "c", author: "jacek", body: "x", url: "u", at: NOW, reviewId: "1" }] }]);
+    const earlier = await recapRun(inbox, reviews, id, { ...base, compare, latestReview: async () => ({ commit: "ppppppp000", at: NOW, url: "u" }) });
+    expect(compare.mock.calls.map(([, from]) => from)).toEqual(["ppppppp000", "eeeeeee999"]);
+    expect(earlier.comments).toMatchObject([{ status: "fixed", why: "changed" }]);
     threads.mockClear();
     expect(await recapRun(inbox, reviews, id, { ...base, latestReview: async () => null })).toEqual({ since: { kind: "none" }, reviews: [], comments: [], ai: null });
     expect(threads).not.toHaveBeenCalled();

@@ -1,6 +1,6 @@
 import type { PluginTheme } from "@getpaseo/plugin";
 import { Pressable, Text, View } from "react-native";
-import { ADDRESSED_LABEL, lookLabel, REVIEW_STATE, STATUS_LABEL, triage, type Recap, type ThreadStatus } from "../shared/recap";
+import { ADDRESSED_LABEL, lookLabel, preview, REVIEW_STATE, STATUS_LABEL, triage, type Recap, type ThreadStatus } from "../shared/recap";
 import type { RecapInput } from "../shared/review";
 import { agoText, Chip, MONO, Pill } from "./ui";
 
@@ -104,12 +104,12 @@ export function RecapView({ recap, ai, theme, onOpen, onSince, onFiles }: { reca
                   </Text>
                 </View>
                 <Text style={{ color: theme.colors.foreground, fontSize: 14 }} numberOfLines={2}>
-                  {comment.body}
+                  {preview(comment.body)}
                 </Text>
                 {verdict?.note ? <Text style={muted}>{verdict.note}</Text> : null}
                 {comment.reply ? (
                   <Text style={muted} numberOfLines={2}>
-                    @{comment.reply.author}: {comment.reply.body.replace(/\s+/g, " ")}
+                    @{comment.reply.author}: {preview(comment.reply.body)}
                   </Text>
                 ) : null}
               </Pressable>
