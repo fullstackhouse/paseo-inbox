@@ -7,10 +7,10 @@ import { installBridge } from "./server/bridge";
 import { openInBrowser } from "./server/open";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { compareCommits, ghWithInput, GithubMembership, GithubSource, latestReviewBy, postPullReview, prOutcome, PrDetailsCache, reviewRequests, reviewsBy, whoami } from "./server/github";
+import { compareCommits, completeCompare, ghWithInput, GithubMembership, GithubSource, latestReviewBy, postPullReview, prCommits, prOutcome, PrDetailsCache, reviewRequests, reviewsBy, whoami } from "./server/github";
 import { filesAt, reanchorRun, recapRun, sinceRun } from "./server/rereview";
 import { priorSection, reviewRecap } from "./shared/recap";
-import { reanchorReview, reviewSince } from "./shared/rereview";
+import { reanchorReview, reviewSince, type Compare } from "./shared/rereview";
 import { Inbox, type StartRequest } from "./server/inbox";
 import { listen } from "./server/listener";
 import { handoffDraft, postDraft, previewDraft } from "./server/post";
@@ -150,7 +150,14 @@ export default function contribute(server: PluginServerContext) {
   let login: Promise<string> | null = null;
   const me = () => (login ??= whoami().catch((error) => ((login = null), Promise.reject(error))));
   const compare = (repo: string, base: string, head: string) => compareCommits(repo, base, head);
-  const sinceDeps = { details, me, latestReview: (repo: string, number: number, who: string) => latestReviewBy(repo, number, who), compare };
+  const sinceDeps = {
+    details,
+    me,
+    latestReview: (repo: string, number: number, who: string) => latestReviewBy(repo, number, who),
+    compare,
+    complete: (repo: string, base: string, head: string, partial: Compare, prPaths: ReadonlySet<string>) => completeCompare(repo, base, head, partial, prPaths),
+    ownCommits: (repo: string, number: number) => prCommits(repo, number),
+  };
   const recapDeps = { ...sinceDeps, threads: (repo: string, number: number) => fetchThreads(repo, number), reviewsBy: (repo: string, number: number, who: string) => reviewsBy(repo, number, who) };
   const draftFilesAt = filesAt((repo, number, sha) => prDetails.cachedFiles(repo, number, sha), compare);
   // An empty gh config for untrusted runs: gh there has no account to speak for.

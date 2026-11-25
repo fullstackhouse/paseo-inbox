@@ -9,7 +9,8 @@ import type { PrUpstream } from "./upstream";
 
 export type Thread = PrUpstream["threads"][number];
 
-export const ThreadStatusSchema = z.enum(["fixed", "pushed-back", "unanswered", "outdated"]);
+/** `unknown`: GitHub listed only part of the diff, and not the thread's file, so whether it changed can't be told. */
+export const ThreadStatusSchema = z.enum(["fixed", "pushed-back", "unanswered", "outdated", "unknown"]);
 export type ThreadStatus = z.infer<typeof ThreadStatusSchema>;
 
 const ReplySchema = z.object({ author: z.string(), body: z.string(), at: z.string(), url: z.string() });
@@ -67,11 +68,11 @@ function changesLines(patch: string | undefined, side: "old" | "new", from: numb
 }
 
 /** Diffs from a commit to the head (the PR's files only), keyed by that commit: for threads written before the since base. */
-export type DiffsFrom = ReadonlyMap<string, readonly PrFile[]>;
+export type DiffsFrom = ReadonlyMap<string, { files: readonly PrFile[]; incomplete?: boolean }>;
 
-function touchedIn(thread: Thread, files: readonly PrFile[], side: "old" | "new"): boolean {
+function touchedIn(thread: Thread, files: readonly PrFile[], side: "old" | "new", incomplete?: boolean): boolean | null {
   const file = files.find((candidate) => candidate.path === thread.path || candidate.previousPath === thread.path);
-  if (!file) return false;
+  if (!file) return incomplete ? null : false;
   if (file.status === "removed") return true;
   if (thread.side === "LEFT") return false;
   if (side === "old" && thread.originalLine != null) return changesLines(file.patch, "old", thread.originalStartLine ?? thread.originalLine, thread.originalLine);
@@ -85,11 +86,11 @@ function touchedIn(thread: Thread, files: readonly PrFile[], side: "old" | "new"
  * was written at its base), else by GitHub's current line on the since diff's new side. A comment on the
  * whole file counts any change to the file. Without a clean diff (rewritten history) nothing counts.
  */
-export function touchedSince(thread: Thread, since: Since, diffs: DiffsFrom = new Map()): boolean {
+export function touchedSince(thread: Thread, since: Since, diffs: DiffsFrom = new Map()): boolean | null {
   const own = thread.commit ? diffs.get(thread.commit) : undefined;
-  if (own) return touchedIn(thread, own, "old");
+  if (own) return touchedIn(thread, own.files, "old", own.incomplete);
   if (since.kind !== "changes") return false;
-  return touchedIn(thread, since.files, thread.commit === since.base ? "old" : "new");
+  return touchedIn(thread, since.files, thread.commit === since.base ? "old" : "new", since.incomplete);
 }
 
 /** What happened to one of the human's threads, worked out without reading the code. */
@@ -97,7 +98,8 @@ export function threadStatus(thread: Thread, me: string, since: Since, diffs?: D
   const [first, ...rest] = thread.comments;
   const reply = rest.filter((comment) => !same(comment.author, me) && !isBot(comment.author)).at(-1) ?? null;
   const changed = touchedSince(thread, since, diffs);
-  const status: ThreadStatus = thread.resolved || changed ? "fixed" : thread.outdated ? "outdated" : reply ? "pushed-back" : "unanswered";
+  // An incomplete diff that doesn't list the file can't back "pushed back" or "unanswered".
+  const status: ThreadStatus = thread.resolved || changed ? "fixed" : thread.outdated ? "outdated" : changed === null ? "unknown" : reply ? "pushed-back" : "unanswered";
   return {
     thread: thread.id,
     path: thread.path,
@@ -111,7 +113,7 @@ export function threadStatus(thread: Thread, me: string, since: Since, diffs?: D
   };
 }
 
-const ATTENTION: Record<ThreadStatus, number> = { "pushed-back": 0, unanswered: 1, outdated: 2, fixed: 3 };
+const ATTENTION: Record<ThreadStatus, number> = { "pushed-back": 0, unanswered: 1, unknown: 2, outdated: 3, fixed: 4 };
 
 /** Commits that open threads of the human's were written on, other than the since base: their diffs to the head say whether those changed. */
 export function threadCommits(threads: readonly Thread[], me: string, since: Since, max = 5): string[] {
@@ -139,7 +141,7 @@ export function buildRecap(since: Since, threads: readonly Thread[], reviews: re
   return { since, reviews: past, comments, ai };
 }
 
-export const STATUS_LABEL: Record<ThreadStatus, string> = { fixed: "Fixed", "pushed-back": "Pushed back", unanswered: "Unanswered", outdated: "Outdated" };
+export const STATUS_LABEL: Record<ThreadStatus, string> = { fixed: "Fixed", "pushed-back": "Pushed back", unanswered: "Unanswered", outdated: "Outdated", unknown: "Unknown" };
 export const REVIEW_STATE: Record<string, string> = { APPROVED: "approved", CHANGES_REQUESTED: "changes requested", COMMENTED: "commented", DISMISSED: "dismissed" };
 export const ADDRESSED_LABEL: Record<RecapInput["comments"][number]["addressed"], string> = { yes: "Addressed", partly: "Partly addressed", no: "Not addressed" };
 
@@ -150,6 +152,12 @@ export const preview = (body: string) =>
     .replace(/\*\*|__|`/g, "")
     .replace(/\s+/g, " ")
     .trim();
+
+/** "a/b/c.ts" → { dir: "a/b/", name: "c.ts" }, so a narrow screen can clip the folders and keep the name. */
+export const splitPath = (path: string) => {
+  const cut = path.lastIndexOf("/") + 1;
+  return { dir: path.slice(0, cut), name: path.slice(cut) };
+};
 
 /** The reviewer's other changes, logic before mechanical (stable within each). */
 export const triage = <T extends { risk: "logic" | "mechanical" }>(changes: readonly T[]): T[] => [...changes].sort((a, b) => (a.risk === b.risk ? 0 : a.risk === "logic" ? -1 : 1));
@@ -178,7 +186,8 @@ export function priorSection(recap: Recap, maxDiff = 60_000): string[] {
   if (recap.comments.length) {
     lines.push("", "Their threads, with a status worked out from GitHub and the diff (check it against the code):");
     for (const comment of recap.comments) {
-      const status = comment.status === "fixed" ? `fixed (${comment.why === "resolved" ? "resolved" : "code changed"})` : STATUS_LABEL[comment.status].toLowerCase();
+      const status =
+        comment.status === "fixed" ? `fixed (${comment.why === "resolved" ? "resolved" : "code changed"})` : comment.status === "unknown" ? "unknown (GitHub listed only part of the diff)" : STATUS_LABEL[comment.status].toLowerCase();
       const reply = comment.reply ? `; last reply @${comment.reply.author}: "${oneLine(comment.reply.body, 300)}"` : "";
       lines.push(`- thread ${comment.thread} · ${comment.path}${comment.line ? `:${comment.line}` : ""} · ${status}: ${oneLine(comment.body, 400)}${reply}`);
     }
@@ -187,6 +196,7 @@ export function priorSection(recap: Recap, maxDiff = 60_000): string[] {
   if (since.kind === "rewritten") lines.push("", `No clean diff since ${base}: the branch was force-pushed or rebased. Set recap.look to "full".`);
   if (since.kind === "changes") {
     lines.push("", `### Diff since ${base} (${plural(since.commits.length, "commit")}, ${plural(since.files.length, "file")})`, ...since.commits.map((commit) => `- ${commit.sha.slice(0, 7)} ${commit.message.split("\n")[0]}`));
+    if (since.incomplete) lines.push("", "GitHub listed only part of this diff: PR files may be missing from it. Read them in the checkout.");
     let budget = maxDiff;
     for (const file of since.files) {
       const patch = file.patch ? "```diff\n" + file.patch + "\n```" : "(no patch: binary or too large)";

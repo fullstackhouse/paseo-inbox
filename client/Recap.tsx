@@ -1,6 +1,6 @@
 import type { PluginTheme } from "@getpaseo/plugin";
 import { Pressable, Text, View } from "react-native";
-import { ADDRESSED_LABEL, lookLabel, preview, REVIEW_STATE, STATUS_LABEL, triage, type Recap, type ThreadStatus } from "../shared/recap";
+import { ADDRESSED_LABEL, lookLabel, preview, REVIEW_STATE, splitPath, STATUS_LABEL, triage, type Recap, type ThreadStatus } from "../shared/recap";
 import type { RecapInput } from "../shared/review";
 import { agoText, Chip, MONO, Pill } from "./ui";
 
@@ -9,6 +9,28 @@ export const SINCE_FROM = { draft: "this draft's commit", reviewed: "the commit 
 /** Worth a block of its own: there's something about the last review to say beyond the Since tab's diff. */
 export const showsRecap = (recap: Recap | null, ai: RecapInput | null): recap is Recap =>
   Boolean(recap && recap.since.kind !== "none" && (recap.reviews.length || recap.comments.length || ai || recap.since.kind === "rewritten" || recap.error));
+
+/**
+ * A path on one line that keeps the file name and line in view on narrow screens: the folders shrink
+ * and clip, the name doesn't.
+ */
+function FilePath({ path, line, color }: { path: string; line: number | null; color: string }) {
+  const { dir, name } = splitPath(path);
+  const style = { color, fontFamily: MONO, fontSize: 12 };
+  return (
+    <View style={{ flexDirection: "row", flexShrink: 1, minWidth: 0 }}>
+      {dir ? (
+        <Text style={{ ...style, flexShrink: 1 }} numberOfLines={1}>
+          {dir}
+        </Text>
+      ) : null}
+      <Text style={{ ...style, flexShrink: 0 }} numberOfLines={1}>
+        {name}
+        {line ? `:${line}` : ""}
+      </Text>
+    </View>
+  );
+}
 
 const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? "" : "s"}`;
 
@@ -23,7 +45,9 @@ export function RecapView({ recap, ai, theme, onOpen, onSince, onFiles }: { reca
   const { since } = recap;
   if (since.kind === "none") return null;
   const base = since.base.slice(0, 7);
-  const statusColor: Record<ThreadStatus, string> = { fixed: theme.colors.statusSuccess, "pushed-back": theme.colors.statusWarning, unanswered: theme.colors.statusDanger, outdated: theme.colors.foregroundMuted };
+  const statusColor: Record<ThreadStatus, string> = { fixed: theme.colors.statusSuccess, "pushed-back": theme.colors.statusWarning, unanswered: theme.colors.statusDanger, outdated: theme.colors.foregroundMuted, unknown: theme.colors.foregroundMuted };
+  const unknown = recap.comments.filter((comment) => comment.status === "unknown").length;
+  const partial = since.kind === "changes" && since.incomplete;
   const addressedColor = { yes: theme.colors.statusSuccess, partly: theme.colors.statusWarning, no: theme.colors.statusDanger } as const;
   const counts = (Object.keys(STATUS_LABEL) as ThreadStatus[]).map((status) => [status, recap.comments.filter((comment) => comment.status === status).length] as const).filter(([, count]) => count);
   const changes = triage(ai?.changes ?? []);
@@ -41,12 +65,19 @@ export function RecapView({ recap, ai, theme, onOpen, onSince, onFiles }: { reca
       ) : (
         <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
           <Text style={{ ...muted, flex: 1, minWidth: 200 }}>
-            {since.kind === "same" ? `No new commits since ${SINCE_FROM[since.from]}` : `${plural(since.commits.length, "commit")}, ${plural(since.files.length, "file")} since ${SINCE_FROM[since.from]}`} ({base}
+            {since.kind === "same" ? `No new commits since ${SINCE_FROM[since.from]}` : `${plural(since.commits.length, "commit")}, ${partial ? "at least " : ""}${plural(since.files.length, "file")} since ${SINCE_FROM[since.from]}`} ({base}
             {since.at ? `, ${agoText(since.at)}` : ""}).
           </Text>
           {since.kind === "changes" ? <Chip theme={theme} label={`Since ${base}`} onPress={onSince} /> : null}
         </View>
       )}
+
+      {partial || unknown ? (
+        <Text style={{ color: theme.colors.statusWarning, fontSize: 13 }}>
+          GitHub lists at most 300 changed files and the full list couldn't be read
+          {unknown ? `, so ${unknown === 1 ? "1 comment is" : `${unknown} comments are`} marked unknown: check ${unknown === 1 ? "it" : "them"} in the diff` : ""}.
+        </Text>
+      ) : null}
 
       {ai ? (
         <View style={{ gap: 4 }}>
@@ -98,10 +129,7 @@ export function RecapView({ recap, ai, theme, onOpen, onSince, onFiles }: { reca
                       {ADDRESSED_LABEL[verdict.addressed]}
                     </Pill>
                   ) : null}
-                  <Text style={{ ...muted, fontFamily: MONO, fontSize: 12, flexShrink: 1 }} numberOfLines={1}>
-                    {comment.path}
-                    {comment.line ? `:${comment.line}` : ""}
-                  </Text>
+                  <FilePath path={comment.path} line={comment.line} color={theme.colors.foregroundMuted} />
                 </View>
                 <Text style={{ color: theme.colors.foreground, fontSize: 14 }} numberOfLines={2}>
                   {preview(comment.body)}
@@ -123,13 +151,13 @@ export function RecapView({ recap, ai, theme, onOpen, onSince, onFiles }: { reca
           <Text style={label}>OTHER CHANGES</Text>
           {changes.map((change, index) => (
             <View key={change.path + index} style={{ gap: 2 }}>
-              <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-                <Pill theme={theme} color={change.risk === "logic" ? theme.colors.statusWarning : theme.colors.foregroundMuted} outlined={change.risk === "mechanical"}>
-                  {change.risk === "logic" ? "Logic" : "Mechanical"}
-                </Pill>
-                <Text style={{ ...muted, fontFamily: MONO, fontSize: 12, flexShrink: 1 }} numberOfLines={1}>
-                  {change.path}
-                </Text>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                <View style={{ flexShrink: 0 }}>
+                  <Pill theme={theme} color={change.risk === "logic" ? theme.colors.statusWarning : theme.colors.foregroundMuted} outlined={change.risk === "mechanical"}>
+                    {change.risk === "logic" ? "Logic" : "Mechanical"}
+                  </Pill>
+                </View>
+                <FilePath path={change.path} line={null} color={theme.colors.foregroundMuted} />
               </View>
               {change.note ? <Text style={{ color: theme.colors.foreground, fontSize: 14 }}>{change.note}</Text> : null}
             </View>

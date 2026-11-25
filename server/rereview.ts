@@ -43,6 +43,17 @@ export interface SinceDeps {
   me: () => Promise<string>;
   latestReview: (repo: string, number: number, me: string) => Promise<MyReview | null>;
   compare: (repo: string, base: string, head: string) => Promise<Compare | null>;
+  /** Makes a compare that hit GitHub's 300-file cap whole for the PR's files; null when it can't. */
+  complete?: (repo: string, base: string, head: string, compare: Compare, prPaths: ReadonlySet<string>) => Promise<Compare | null>;
+  /** The PR's own commits, so the base branch's ones a merge brought in don't count. */
+  ownCommits?: (repo: string, number: number) => Promise<Set<string>>;
+}
+
+/** `base...head`, made whole when GitHub's list hit its cap (still `truncated` if that fails). */
+async function compareFor(deps: SinceDeps, repo: string, base: string, live: PrDetails, prPaths: ReadonlySet<string>): Promise<Compare | null> {
+  const compare = await deps.compare(repo, base, live.headSha);
+  if (!compare?.truncated || !deps.complete) return compare;
+  return (await deps.complete(repo, base, live.headSha, compare, prPaths).catch(() => null)) ?? compare;
 }
 
 /** "Changes since my last review" for a run's PR: what changed between the commit the human last reviewed and the live head. */
@@ -61,15 +72,18 @@ async function sinceFor(inbox: Inbox, reviews: ReviewStore, runId: string, deps:
   const me = fromDraft ? "" : await deps.me().catch(() => "");
   const mine = me ? await deps.latestReview(item.pr.repo, item.pr.number, me).catch(() => null) : null;
   const base = fromDraft ?? sinceBase(draft, live.headSha, mine);
-  const compare = base && base.sha !== live.headSha ? await deps.compare(item.pr.repo, base.sha, live.headSha) : null;
-  return { since: sinceChanges(base, live.headSha, compare, new Set(live.files.map((file) => file.path))), live };
+  const prPaths = new Set(live.files.map((file) => file.path));
+  const moved = base && base.sha !== live.headSha;
+  const [compare, own] = await Promise.all([moved ? compareFor(deps, item.pr.repo, base.sha, live, prPaths) : null, moved && deps.ownCommits ? deps.ownCommits(item.pr.repo, item.pr.number).catch(() => undefined) : undefined]);
+  return { since: sinceChanges(base, live.headSha, compare, prPaths, own), live };
 }
 
 /** A clean diff from `base` to the head, with the PR's files only; null for rewritten history or a failed read. */
-async function cleanDiff(deps: SinceDeps, repo: string, base: string, live: PrDetails): Promise<PrFile[] | null> {
-  const compare = await deps.compare(repo, base, live.headSha).catch(() => null);
-  const since = sinceChanges({ sha: base, from: "posted" }, live.headSha, compare, new Set(live.files.map((file) => file.path)));
-  return since.kind === "changes" ? since.files : since.kind === "same" ? [] : null;
+async function cleanDiff(deps: SinceDeps, repo: string, base: string, live: PrDetails): Promise<{ files: PrFile[]; incomplete?: boolean } | null> {
+  const prPaths = new Set(live.files.map((file) => file.path));
+  const compare = await compareFor(deps, repo, base, live, prPaths).catch(() => null);
+  const since = sinceChanges({ sha: base, from: "posted" }, live.headSha, compare, prPaths);
+  return since.kind === "changes" ? { files: since.files, incomplete: since.incomplete } : since.kind === "same" ? { files: [] } : null;
 }
 
 export interface RecapDeps extends SinceDeps {

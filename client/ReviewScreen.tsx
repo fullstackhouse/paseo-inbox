@@ -1036,8 +1036,9 @@ function SinceView({
     <>
       <Text style={muted}>
         Since {what} → {since.head.slice(0, 7)}: {since.commits.length} commit{since.commits.length === 1 ? "" : "s"}, {since.files.length} file{since.files.length === 1 ? "" : "s"}
-        {since.hidden ? `, plus ${since.hidden} the PR doesn't change (merged from the base branch), left out` : ""}.
+        {since.hidden ? `, plus ${since.incomplete ? "at least " : ""}${since.hidden} the PR doesn't change (merged from the base branch), left out` : ""}.
       </Text>
+      {since.incomplete ? <Text style={{ color: theme.colors.statusWarning, fontSize: 13 }}>GitHub lists at most 300 changed files and the full list couldn't be read, so some of the PR's files may be missing here. Check them in Files.</Text> : null}
       {since.commits.length ? (
         <View style={{ gap: 4, backgroundColor: theme.colors.surface1, borderRadius: 10, padding: 10 }}>
           {since.commits.map((commit) => (

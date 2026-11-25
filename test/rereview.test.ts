@@ -2,14 +2,16 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { compareCommits, latestReviewBy, reviewRequests, reviewsBy } from "../server/github";
+import { compareCommits, completeCompare, latestReviewBy, reviewRequests, reviewsBy } from "../server/github";
 import { Inbox, type InboxDeps } from "../server/inbox";
 import { postDraft } from "../server/post";
 import { filesAt, reanchorRun, recapRun, sinceRun } from "../server/rereview";
 import { ReviewStore } from "../server/reviews";
 import { callTool } from "../server/tools";
 import { DISMISSED, plan, reopen, runId, setRun, type Pr, type State } from "../shared/inbox";
-import { buildRecap, lookLabel, preview, priorSection, RecapSchema, threadCommits, threadStatus, touchedSince, triage, type Thread } from "../shared/recap";
+import { parsePatch } from "../shared/diff";
+import { unifiedPatch } from "../shared/linediff";
+import { buildRecap, lookLabel, preview, priorSection, splitPath, RecapSchema, threadCommits, threadStatus, touchedSince, triage, type Thread } from "../shared/recap";
 import { anchorAt, askedAgain, locate, reanchorDraft, sideLines, sinceBase, sinceChanges, type Compare, type ReviewRequest, type Since } from "../shared/rereview";
 import { composeReview, effectiveVerdict, RecapInputSchema, toDraft, updateComment, ReviewInputSchema, type PrDetails, type PrFile } from "../shared/review";
 import { config, emptyState, later, NOW, pr } from "./fixtures";
@@ -110,6 +112,12 @@ describe("since my last review", () => {
   const paths = new Set([PATH]);
   it("shows what changed, without files the base branch merged in", () => {
     expect(sinceChanges({ sha: A, from: "posted" }, B, compare(), paths)).toMatchObject({ kind: "changes", base: A, head: B, commits: [{ message: "Fix tax" }], files: [{ path: PATH }], hidden: 1 });
+  });
+  it("counts the true total of left-out files, keeps only the PR's own commits, and flags a partial list", () => {
+    const merged = compare({ commits: [{ sha: B, message: "Fix tax" }, { sha: "m1", message: "Main's commit" }], totalFiles: 653 });
+    expect(sinceChanges({ sha: A, from: "posted" }, B, merged, paths, new Set([B]))).toMatchObject({ commits: [{ sha: B }], hidden: 652 });
+    expect(sinceChanges({ sha: A, from: "posted" }, B, merged, paths)).not.toHaveProperty("incomplete");
+    expect(sinceChanges({ sha: A, from: "posted" }, B, { ...merged, truncated: true }, paths)).toMatchObject({ incomplete: true, hidden: 652 });
   });
   it("says so when the commit is gone or history was rewritten, and when nothing changed", () => {
     expect(sinceChanges({ sha: A, from: "draft" }, B, null, paths)).toEqual({ kind: "rewritten", base: A, from: "draft", why: "unreachable" });
@@ -284,7 +292,7 @@ describe("GitHub reads", () => {
     expect(await compareCommits("acme/shop", A, B, async () => Promise.reject(gone))).toBeNull();
     await expect(compareCommits("acme/shop", A, B, async () => Promise.reject(new Error("timeout")))).rejects.toThrow("timeout");
     const out = JSON.stringify({ status: "ahead", behind_by: 0, commits: [{ sha: B, commit: { message: "Fix" } }], files: [{ filename: PATH, status: "modified", additions: 1, deletions: 0, patch: "@@" }] });
-    expect(await compareCommits("acme/shop", A, B, async () => out)).toEqual({ status: "ahead", behindBy: 0, commits: [{ sha: B, message: "Fix" }], files: [{ path: PATH, status: "modified", additions: 1, deletions: 0, patch: "@@", previousPath: undefined }] });
+    expect(await compareCommits("acme/shop", A, B, async () => out)).toEqual({ status: "ahead", behindBy: 0, commits: [{ sha: B, message: "Fix" }], files: [{ path: PATH, status: "modified", additions: 1, deletions: 0, patch: "@@", previousPath: undefined }], truncated: false });
   });
 
   it("finds my latest submitted review and the timeline's review requests", async () => {
@@ -340,8 +348,12 @@ describe("since your review: recap", () => {
   it("judges a thread from an earlier round by the diff since its own commit", () => {
     const earlier = thread("t", { commit: "old", originalLine: 4, line: 9 });
     expect(touchedSince(earlier, { kind: "same", base: A, from: "posted" })).toBe(false);
-    expect(touchedSince(earlier, { kind: "same", base: A, from: "posted" }, new Map([["old", [changed]]]))).toBe(true);
-    expect(touchedSince(earlier, changes, new Map([["old", []]]))).toBe(false);
+    expect(touchedSince(earlier, { kind: "same", base: A, from: "posted" }, new Map([["old", { files: [changed] }]]))).toBe(true);
+    expect(touchedSince(earlier, changes, new Map([["old", { files: [] }]]))).toBe(false);
+    // GitHub listed only part of that diff and the thread's file isn't in it: can't tell.
+    expect(touchedSince(earlier, changes, new Map([["old", { files: [], incomplete: true }]]))).toBeNull();
+    expect(touchedSince(earlier, changes, new Map([["old", { files: [changed], incomplete: true }]]))).toBe(true);
+    expect(touchedSince(thread("t", { commit: A, originalLine: 9, line: 9, path: "gone.ts" }), { ...changes, incomplete: true })).toBeNull();
     const threads = [earlier, thread("base", { commit: A }), thread("done", { commit: "x", resolved: true }), thread("again", { commit: "old" }), thread("other", { commit: "y", comments: [comment("kuba", "Hi", 1)] })];
     expect(threadCommits(threads, me, changes)).toEqual(["old"]);
   });
@@ -354,6 +366,12 @@ describe("since your review: recap", () => {
     const replied = status({ commit: A, originalLine: 9, line: 9, comments: [comment("jacek", "Why?", 1), comment("ola", "On purpose.", 5), comment("coderabbit[bot]", "Noted", 6), comment("jacek", "Hm", 7)] });
     expect(replied).toMatchObject({ status: "pushed-back", body: "Why?", reply: { author: "ola", body: "On purpose." } });
     expect(status({ commit: A, originalLine: 9, line: 9 })).toMatchObject({ status: "unanswered", reply: null });
+    // An incomplete diff never yields "pushed back" or "unanswered" for a file it doesn't list.
+    const partial: Since = { ...changes, files: [], incomplete: true };
+    expect(status({ commit: A, originalLine: 9, line: 9, comments: [comment("jacek", "Why?", 1), comment("ola", "On purpose.", 5)] }, partial)).toMatchObject({ status: "unknown", reply: { author: "ola" } });
+    expect(status({ commit: A, originalLine: 9, line: 9 }, partial)).toMatchObject({ status: "unknown" });
+    expect(status({ resolved: true }, partial)).toMatchObject({ status: "fixed" });
+    expect(priorSection(buildRecap(partial, [thread("t", { commit: A, originalLine: 9, line: 9 })], [], me, null)).join("\n")).toContain("unknown (GitHub listed only part of the diff)");
   });
 
   it("lists my past reviews with their comment counts, and only my threads, those needing me first", () => {
@@ -408,6 +426,8 @@ describe("since your review: recap", () => {
     expect(lookLabel({ ...ai, look: "full" })).toBe("Full re-look");
     expect(preview("⚠️ **minor** — A role that calls `createParty`\n\nforgets **it**.")).toBe("A role that calls createParty forgets it.");
     expect(preview("🎨 **nit** — Rename.")).toBe("Rename.");
+    expect(splitPath("packages/core/write.ts")).toEqual({ dir: "packages/core/", name: "write.ts" });
+    expect(splitPath("README.md")).toEqual({ dir: "", name: "README.md" });
   });
 });
 
@@ -441,5 +461,98 @@ describe("recapRun", () => {
     expect(result.text.indexOf("## Your previous review")).toBeLessThan(result.text.indexOf("## Diff"));
     const broken = await callTool(inbox, reviews, "agent-1", "inbox_pr", {}, NOW, async () => details(A, [file(OLD)]), async () => Promise.reject(new Error("x")));
     expect(broken.isError).toBeFalsy();
+  });
+});
+
+describe("unifiedPatch (rebuilding a file GitHub's compare left out)", () => {
+  /** Applies a patch to `before` by its hunks, to check it reproduces `after`. */
+  const apply = (before: string, patch: string) => {
+    const old = before.split("\n");
+    const out: string[] = [];
+    let at = 1;
+    for (const hunk of parsePatch(patch)) {
+      const first = hunk.lines.find((line) => line.old !== undefined)?.old ?? Number(/-(\d+)/.exec(hunk.header)![1]) + 1;
+      while (at < first) out.push(old[at++ - 1]!);
+      for (const line of hunk.lines) {
+        if (line.kind !== "del") out.push(line.text);
+        if (line.kind !== "add") at++;
+      }
+    }
+    while (at <= old.length) out.push(old[at++ - 1]!);
+    return out.join("\n");
+  };
+
+  it("writes GitHub-style hunks with three lines of context and the counts", () => {
+    const before = ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"].join("\n");
+    const after = ["a", "b", "c", "d", "E", "f", "g", "h", "i", "j", "k"].join("\n");
+    expect(unifiedPatch(before, after)).toEqual({
+      patch: "@@ -2,9 +2,10 @@\n b\n c\n d\n-e\n+E\n f\n g\n h\n i\n j\n+k",
+      additions: 2,
+      deletions: 1,
+    });
+    expect(unifiedPatch("", "x\ny\n")).toEqual({ patch: "@@ -0,0 +1,2 @@\n+x\n+y", additions: 2, deletions: 0 });
+    expect(unifiedPatch("same\n", "same\n")).toEqual({ patch: "", additions: 0, deletions: 0 });
+  });
+
+  it("round-trips scattered edits, and gives up past its edit budget", () => {
+    const before = Array.from({ length: 200 }, (_, index) => `line ${index}`);
+    const after = before.flatMap((line, index) => (index % 37 === 0 ? [] : index % 23 === 0 ? [line, `new ${index}`] : index % 41 === 0 ? [`changed ${index}`] : [line]));
+    const result = unifiedPatch(before.join("\n"), after.join("\n"))!;
+    expect(apply(before.join("\n"), result.patch)).toBe(after.join("\n"));
+    expect(result.patch.split("\n").filter((line) => line.startsWith("@@")).length).toBeGreaterThan(1);
+    expect(unifiedPatch(before.join("\n"), after.join("\n"), 3, 5)).toBeNull();
+  });
+});
+
+
+describe("GitHub's 300-file compare cap", () => {
+  const files = (count: number) => Array.from({ length: count }, (_, index) => ({ filename: `main/${index}.ts`, status: "modified", additions: 1, deletions: 0, patch: "@@" }));
+  it("marks a compare that hit the cap as truncated", async () => {
+    const out = (count: number) => JSON.stringify({ status: "ahead", behind_by: 0, commits: [], files: files(count) });
+    expect((await compareCommits("acme/shop", A, B, async () => out(300)))!.truncated).toBe(true);
+    expect((await compareCommits("acme/shop", A, B, async () => out(12)))!.truncated).toBe(false);
+  });
+
+  it("completes the PR's files from the two trees, rebuilding the patches the compare left out", async () => {
+    // What `--jq` leaves of GitHub's tree: [path, blob sha] pairs.
+    const tree = (entries: [string, string][]) => JSON.stringify({ truncated: false, tree: entries });
+    const blob = (text: string) => JSON.stringify({ encoding: "base64", content: Buffer.from(text).toString("base64") });
+    const run = vi.fn(async (args: string[]) => {
+      const path = args.find((arg) => arg.startsWith("repos/"))!;
+      if (path.includes(`/git/trees/${A}`)) return tree([[PATH, "old"], ["same.ts", "s"], ["main/a.ts", "1"], ["main/b.ts", "2"], ["removed.ts", "r"]]);
+      if (path.includes(`/git/trees/${B}`)) return tree([[PATH, "new"], ["same.ts", "s"], ["main/a.ts", "1x"], ["main/b.ts", "2x"], ["added.ts", "n"]]);
+      if (path.endsWith("/git/blobs/old")) return blob(OLD.join("\n") + "\n");
+      if (path.endsWith("/git/blobs/new")) return blob(OLD.map((line) => line.replace("return 0;", "return rate;")).join("\n") + "\n");
+      throw new Error(`unexpected ${path}`);
+    });
+    const truncated = { status: "ahead", behindBy: 0, commits: [], files: [], truncated: true };
+    const complete = await completeCompare("acme/shop", A, B, truncated, new Set([PATH, "same.ts"]), run);
+    expect(complete).toMatchObject({ truncated: false, totalFiles: 5, files: [{ path: PATH, status: "modified", additions: 1, deletions: 1 }] });
+    expect(complete!.files[0]!.patch).toContain("-  return 0;\n+  return rate;");
+    expect(run.mock.calls.filter(([args]) => args.some((arg) => arg.includes("/git/blobs/")))).toHaveLength(2);
+    // A tree GitHub cut short can't be trusted: no completion.
+    const short = vi.fn(async () => JSON.stringify({ truncated: true, tree: [] }));
+    expect(await completeCompare("acme/shop", A, B, truncated, new Set([PATH]), short)).toBeNull();
+  });
+
+  it("uses the completed diff in the recap, and says unknown when it can't complete", async () => {
+    const { inbox, reviews, runId: id } = await drafted();
+    const thread: Thread = { id: "t1", path: PATH, line: 9, resolved: false, outdated: false, commit: "ppppppp000", originalLine: 9, comments: [{ id: "c", author: "jacek", body: "x", url: "u", at: NOW, reviewId: "1" }] };
+    const deps = {
+      details: async () => details(A, [file(OLD)]),
+      me: async () => "jacek",
+      latestReview: async () => ({ commit: "ppppppp000", at: NOW, url: "u" }),
+      compare: async (): Promise<Compare> => ({ status: "ahead", behindBy: 0, commits: [{ sha: A, message: "Mine" }, { sha: "m1", message: "From main" }], files: [], truncated: true }),
+      threads: async () => [thread],
+      reviewsBy: async () => [],
+      ownCommits: async () => new Set([A]),
+    };
+    const unknown = await recapRun(inbox, reviews, id, { ...deps, complete: async () => null });
+    expect(unknown).toMatchObject({ since: { kind: "changes", incomplete: true, commits: [{ sha: A }] }, comments: [{ status: "unknown" }] });
+    const edit = { ...file(OLD), status: "modified", patch: "@@ -9,1 +9,1 @@\n-}\n+};" };
+    const complete = vi.fn(async (): Promise<Compare> => ({ status: "ahead", behindBy: 0, commits: [], files: [edit], truncated: false, totalFiles: 900 }));
+    const fixed = await recapRun(inbox, reviews, id, { ...deps, complete });
+    expect(fixed).toMatchObject({ since: { kind: "changes", hidden: 899 }, comments: [{ status: "fixed", why: "changed" }] });
+    expect(fixed.since).not.toHaveProperty("incomplete");
   });
 });
