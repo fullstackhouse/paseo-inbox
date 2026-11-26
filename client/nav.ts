@@ -41,6 +41,10 @@ const reviewsInExplorer = () => Boolean(options.explorerTabs) && options.reviewL
 export const openReview = (runId: string, workspaceId?: string | null) =>
   openScreen({ screenId: REVIEW_SCREEN, params: { runId }, ...(workspaceId ? { workspaceId, ...(reviewsInExplorer() ? { location: "explorer" as const } : {}) } : {}) });
 
+/** Opens the review screen of a PR by link (`owner/repo#N` or URL): its newest review, or a preview to start one. */
+export const openPrReview = (pr: string, workspaceId?: string | null) =>
+  openScreen({ screenId: REVIEW_SCREEN, params: { pr }, ...(workspaceId ? { workspaceId, ...(reviewsInExplorer() ? { location: "explorer" as const } : {}) } : {}) });
+
 /**
  * Opens the reviewer chat in the main pane. With reviews in the Explorer sidebar it keeps the review beside
  * the chat, so you talk to the reviewer with the draft in view. Otherwise, and on compact layouts where

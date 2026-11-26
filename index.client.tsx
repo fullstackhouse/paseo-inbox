@@ -5,6 +5,7 @@ import { INBOX_SCREEN, InboxScreen } from "./client/InboxScreen";
 import { DraftChangeCard } from "./client/DraftChangeCard";
 import { setOpenScreen } from "./client/nav";
 import { REVIEW_CARD, ReviewCard, ReviewCardSchema } from "./client/ReviewCard";
+import { contributePrLinks } from "./client/prLinks";
 import { contributeReviewPills } from "./client/reviewPills";
 import { InboxSettings } from "./client/SettingsScreen";
 import { REVIEW_SCREEN, ReviewScreen } from "./client/ReviewScreen";
@@ -59,7 +60,9 @@ export default function contribute(client: PluginClientContext) {
   client.addSidebarHeaderItem({ id: INBOX_SCREEN, title: "Inbox", Component: InboxItem });
   const stopPills = contributeReviewPills(client);
   const stopSnoozed = observeSnoozedWorkspaces(client, "inbox");
+  const stopPrLinks = contributePrLinks(client);
   return () => {
+    stopPrLinks();
     stopPills();
     stopSnoozed();
   };
