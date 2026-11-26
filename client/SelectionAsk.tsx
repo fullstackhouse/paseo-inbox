@@ -6,12 +6,13 @@ import { AskBox } from "./CommentCard";
 import { Chip, MONO } from "./ui";
 
 // The client compiles without the DOM lib (it runs on native too), so the DOM shapes used here are typed locally.
-type Rect = { top: number; bottom: number; left: number; width: number };
+type Rect = { top: number; bottom: number; left: number; width: number; height: number };
 type El = { contains(other: unknown): boolean; getBoundingClientRect(): Rect };
-type Range = { commonAncestorContainer: unknown; startContainer: unknown; getBoundingClientRect(): Rect };
+type Range = { commonAncestorContainer: unknown; startContainer: unknown; getBoundingClientRect(): Rect; cloneRange(): Range };
 type Selection = { isCollapsed: boolean; rangeCount: number; getRangeAt(index: number): Range; toString(): string; removeAllRanges(): void };
 type Doc = { addEventListener(type: string, listener: (event: never) => void, capture?: boolean): void; removeEventListener(type: string, listener: (event: never) => void, capture?: boolean): void };
-type Win = { getSelection(): Selection | null; document?: Doc };
+type Observer = { observe(target: unknown): void; disconnect(): void };
+type Win = { getSelection(): Selection | null; document?: Doc; ResizeObserver?: new (callback: () => void) => Observer } & Doc;
 
 const win = () => (Platform.OS === "web" ? (globalThis as unknown as Partial<Win>) : null);
 
@@ -52,8 +53,11 @@ export function SelectionAsk({
   aboutRef.current = about;
   const askingRef = useRef(asking);
   askingRef.current = asking;
+  // The selected text, kept so the chip can follow it when the layout above it moves.
+  const range = useRef<Range | null>(null);
 
   const close = () => {
+    range.current = null;
     setPicked(null);
     setAsking(false);
   };
@@ -64,25 +68,39 @@ export function SelectionAsk({
     const doc = w?.document;
     if (!w?.getSelection || !doc) return;
     const inOverlay = (target: unknown) => Boolean((overlay.current as El | null)?.contains(target));
+    /** Where the chip sits under `selected`, in the container; null once that text left the page (its file folded away). */
+    const placeUnder = (selected: Range) => {
+      const box = container.current as El | null;
+      const rect = selected.getBoundingClientRect();
+      if (!box || !box.contains(selected.startContainer) || (!rect.width && !rect.height)) return null;
+      const bounds = box.getBoundingClientRect();
+      return { top: rect.bottom - bounds.top + 6, left: Math.max(0, Math.min(rect.left - bounds.left, bounds.width - Math.min(ASK_WIDTH, bounds.width))) };
+    };
     const read = () => {
       // A question being typed keeps its quote, whatever gets selected meanwhile.
       if (askingRef.current) return;
       const box = container.current as El | null;
       const selection = w.getSelection!();
-      if (!box || !selection || selection.isCollapsed || !selection.rangeCount) return setPicked(null);
-      const range = selection.getRangeAt(0);
-      if (!box.contains(range.commonAncestorContainer) || inOverlay(range.commonAncestorContainer)) return setPicked(null);
+      if (!box || !selection || selection.isCollapsed || !selection.rangeCount) return close();
+      const selected = selection.getRangeAt(0).cloneRange();
+      if (!box.contains(selected.commonAncestorContainer) || inOverlay(selected.commonAncestorContainer)) return close();
       const quote = quoteFor(selection.toString());
-      if (!quote) return setPicked(null);
-      const rect = range.getBoundingClientRect();
-      const bounds = box.getBoundingClientRect();
-      setPicked({
-        quote,
-        about: aboutRef.current(range.startContainer),
-        top: rect.bottom - bounds.top + 6,
-        left: Math.max(0, Math.min(rect.left - bounds.left, bounds.width - Math.min(ASK_WIDTH, bounds.width))),
-      });
+      const place = placeUnder(selected);
+      if (!quote || !place) return close();
+      range.current = selected;
+      setPicked({ quote, about: aboutRef.current(selected.startContainer), ...place });
     };
+    // Folding a file, ticking Viewed or resizing moves the text: move the chip with it, or close it if
+    // the text is gone. A question being typed stays where it is rather than vanish with its text.
+    const follow = () => {
+      if (!range.current) return;
+      const place = placeUnder(range.current);
+      if (place) setPicked((current) => (current ? { ...current, ...place } : current));
+      else if (!askingRef.current) close();
+    };
+    const observer = w.ResizeObserver ? new w.ResizeObserver(follow) : null;
+    if (container.current) observer?.observe(container.current);
+    w.addEventListener?.("resize", follow);
     // Read once the gesture ends, not on every selectionchange, so the chip doesn't chase the drag.
     let timer: ReturnType<typeof setTimeout> | undefined;
     const stop = () => timer && clearTimeout(timer);
@@ -96,6 +114,8 @@ export function SelectionAsk({
     doc.addEventListener("keyup", onEnd);
     return () => {
       stop();
+      observer?.disconnect();
+      w.removeEventListener?.("resize", follow);
       doc.removeEventListener("mouseup", onEnd);
       doc.removeEventListener("touchend", onEnd);
       doc.removeEventListener("keyup", onEnd);
