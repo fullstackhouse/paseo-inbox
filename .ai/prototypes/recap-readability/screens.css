@@ -491,8 +491,8 @@
 .frame-bar .sb-frame-label { margin-left: auto; font-size: 0.6875rem; color: var(--muted-foreground); }
 
 /* ── rr-: paseo-inbox review pane, Zinc dark (tokens: --app-p-*) ─────────────────────────── */
-.rr-screen { width: 1040px; zoom: var(--rr-scale, 0.6); background: var(--app-p-surface0); color: var(--app-p-foreground); font: 14px/1.43 var(--font-geist-sans); padding: 16px 20px 24px; }
-.rr-screen.rr-phone { width: 390px; zoom: var(--rr-phone-scale, 1); padding: 12px; }
+.ka-screen.rr-screen { width: 1040px; zoom: var(--rr-scale, 0.6); background: var(--app-p-surface0); color: var(--app-p-foreground); font: 14px/1.43 var(--font-geist-sans); padding: 16px 20px 24px; }
+.ka-screen.rr-screen.rr-phone { width: 390px; zoom: var(--rr-phone-scale, 1); padding: 12px; }
 .rr-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 10px; }
 .rr-head b { font-size: 17px; }
 .rr-tabs { display: flex; gap: 18px; border-bottom: 1px solid var(--app-p-border); margin-bottom: 14px; color: var(--app-p-muted); font-size: 13px; }
