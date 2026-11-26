@@ -18,7 +18,7 @@ type Pill = {
 /**
  * One composer pill on each inbox agent's chat (the composer holds one pill per plugin): a "Review" menu
  * with "Open review", and "Post as <verdict>…" while the draft can be posted, which confirms in a popover
- * first. Once the review is posted it opens it in one tap ("Review posted"). It stays above the composer,
+ * first; otherwise that item is greyed out and says why (a new push, a newer review, dismissed). Once the review is posted it opens it in one tap ("Review posted"). It stays above the composer,
  * where the timeline card it replaces scrolled away, and follows the shared inbox view, so a Post or
  * Dismiss on another screen updates it at once.
  */
@@ -53,7 +53,7 @@ export function contributeReviewPills(client: PluginClientContext): () => void {
   };
   const postBehavior: PluginButton["behavior"] = { kind: "popover", Content: makePostPopover(store) };
 
-  const button = (runId: string, workspaceId: string, posted: boolean, postAs: Verdict | null): Pick<PluginButton, "title" | "label" | "behavior"> => {
+  const button = (runId: string, workspaceId: string, posted: boolean, postAs: Verdict | null, cantPost: string | null): Pick<PluginButton, "title" | "label" | "behavior"> => {
     const open = { kind: "action" as const, onPress: () => openReview(runId, workspaceId) };
     if (posted) return { title: "Open the review", label: "Review posted", behavior: open };
     return {
@@ -63,7 +63,8 @@ export function contributeReviewPills(client: PluginClientContext): () => void {
         kind: "menu",
         items: [
           { kind: "item", id: "open", title: "Open review", icon: "ClipboardCheck", behavior: open },
-          { kind: "item", id: "post", title: postAs ? `Post as ${postAs}…` : "Post…", icon: "Send", visible: postAs !== null, behavior: postBehavior },
+          // Shown greyed out with its reason when posting isn't possible, so it doesn't just disappear.
+          { kind: "item", id: "post", title: postAs ? `Post as ${postAs}…` : `Can't post: ${cantPost ?? "not ready"}`, icon: "Send", disabled: postAs === null, behavior: postBehavior },
         ],
       },
     };
@@ -72,7 +73,7 @@ export function contributeReviewPills(client: PluginClientContext): () => void {
   const sync = () => {
     const view = snapshot();
     if (!view) return;
-    const wanted = new Map<string, { workspaceId: string; itemKey: string; runId: string; posted: boolean; postAs: Verdict | null }>();
+    const wanted = new Map<string, { workspaceId: string; itemKey: string; runId: string; posted: boolean; postAs: Verdict | null; cantPost: string | null }>();
     for (const run of view.runs) {
       if (!run.agentId || !run.workspaceId || wanted.has(run.agentId)) continue;
       const pill = reviewPill(view.runs, view, run.agentId);
@@ -83,13 +84,13 @@ export function contributeReviewPills(client: PluginClientContext): () => void {
       pill.registration.remove();
       pills.delete(agentId);
     }
-    for (const [agentId, { workspaceId, itemKey, runId, posted, postAs }] of wanted) {
-      const key = `${runId}\0${posted}\0${postAs ?? ""}`;
+    for (const [agentId, { workspaceId, itemKey, runId, posted, postAs, cantPost }] of wanted) {
+      const key = `${runId}\0${posted}\0${postAs ?? ""}\0${cantPost ?? ""}`;
       const existing = pills.get(agentId);
       if (existing?.key === key) continue;
       // Only on a real change: a new behavior closes the menu or popover the human has open.
-      if (existing) existing.registration.update(button(runId, workspaceId, posted, postAs));
-      const registration = existing?.registration ?? client.addComposerPill({ id: "review", workspaceId, agentId, button: { icon: "ClipboardCheck", ...button(runId, workspaceId, posted, postAs) } });
+      if (existing) existing.registration.update(button(runId, workspaceId, posted, postAs, cantPost));
+      const registration = existing?.registration ?? client.addComposerPill({ id: "review", workspaceId, agentId, button: { icon: "ClipboardCheck", ...button(runId, workspaceId, posted, postAs, cantPost) } });
       pills.set(agentId, { registration, key, target: postAs ? { runId, itemKey, own: isMine(view.items[itemKey]?.pr, view.me) } : null });
     }
     for (const listener of listeners) listener();

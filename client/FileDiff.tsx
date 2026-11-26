@@ -7,6 +7,7 @@ import { addedText, isMarkdownPath } from "../shared/markdown";
 import type { Placement, PrFile, PrThread, Severity, StoredComment } from "../shared/review";
 import { CommentCard, Composer, type CommentChange } from "./CommentCard";
 import { Markdown } from "./Markdown";
+import { hasTextSelection } from "./SelectionAsk";
 import { Chip, MONO, STICKY, tint } from "./ui";
 
 const BIG = 300;
@@ -208,7 +209,7 @@ export function FileDiff({
                   const here = Boolean(target && target.line !== null && target.line === number && target.side === side);
                   return (
                     <View key={lineIndex}>
-                      <Line line={line} tokens={highlighted[hunkIndex]?.[lineIndex]} theme={theme} compact={compact} active={here} onPress={actions.editable && number ? () => setTarget(here ? null : { line: number, side, text: line.text }) : undefined} />
+                      <Line line={line} tokens={highlighted[hunkIndex]?.[lineIndex]} theme={theme} compact={compact} active={here} onPress={actions.editable && number ? () => !hasTextSelection() && setTarget(here ? null : { line: number, side, text: line.text }) : undefined} />
                       {threadAt(line).length ? <View style={{ padding: 8, gap: 6, backgroundColor: theme.colors.surface0 }}>{threadAt(line).map(threadCard)}</View> : null}
                       {comments
                         .filter((comment) => on(line, comment))
@@ -245,9 +246,10 @@ function Line({ line, tokens, theme, compact, onPress, active }: { line: DiffLin
   const number = { fontFamily: MONO, fontSize: 11, color: theme.colors.foregroundMuted, textAlign: "right" as const, width: 34, paddingRight: 6 };
   return (
     <Pressable onPress={onPress} disabled={!onPress} accessibilityLabel={onPress ? `Comment on line ${line.new ?? line.old}` : undefined} style={{ flexDirection: "row", backgroundColor: bg }}>
-      {compact ? null : <Text style={number}>{line.old ?? ""}</Text>}
-      <Text style={number}>{line.kind === "del" ? line.old : line.new}</Text>
-      <Text style={{ fontFamily: MONO, fontSize: 12, color: theme.colors.foregroundMuted, width: 12 }}>{sign}</Text>
+      {/* Gutters stay out of a selection, so "Ask about this" quotes only the code. */}
+      {compact ? null : <Text selectable={false} style={number}>{line.old ?? ""}</Text>}
+      <Text selectable={false} style={number}>{line.kind === "del" ? line.old : line.new}</Text>
+      <Text selectable={false} style={{ fontFamily: MONO, fontSize: 12, color: theme.colors.foregroundMuted, width: 12 }}>{sign}</Text>
       <Text style={[{ fontFamily: MONO, fontSize: 12, lineHeight: 18, color: theme.colors.foreground, flex: 1, minWidth: 0, paddingRight: 8 }, BREAK]}>
         {line.text && tokens
           ? tokens.map((token, index) =>

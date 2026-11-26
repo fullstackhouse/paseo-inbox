@@ -38,6 +38,7 @@ import {
 import { reviewRecap, type Recap } from "../shared/recap";
 import { reanchorReview, type Since } from "../shared/rereview";
 import { RecapView, showsRecap, SINCE_FROM } from "./Recap";
+import { askMessage } from "../shared/selection";
 import { AskBox, CommentCard } from "./CommentCard";
 import { HandoffPanel, PreviewPane } from "./Decide";
 import { FileDiff, type DiffActions } from "./FileDiff";
@@ -45,6 +46,7 @@ import { FileIndex } from "./FileIndex";
 import { Markdown } from "./Markdown";
 import { openReviewerChat } from "./nav";
 import { PrPreview } from "./PrPreview";
+import { SelectionAsk } from "./SelectionAsk";
 import { useOpenUrl } from "./openUrl";
 import { agoText, Chip, MONO, Pill, PrStatePill, STICKY, verdictColor } from "./ui";
 import { useInbox } from "./useInbox";
@@ -146,6 +148,9 @@ export function ReviewScreen({ theme, layout, navigation, params, setTitle }: Pl
   const listY = useRef(0);
   const fileY = useRef(new Map<string, number>());
   const fileNode = useRef(new Map<string, unknown>());
+  // Every rendered file card, any tab: where a text selection sits, for "Ask about this".
+  const diffNode = useRef(new Map<unknown, string>());
+  const content = useRef<View>(null);
   // The file on screen in the Files tab, for the index highlight and j/k/v.
   const [current, setCurrentState] = useState<string | null>(null);
   // Mirrors `current` so key repeats faster than a render step from the newest file.
@@ -274,9 +279,9 @@ export function ReviewScreen({ theme, layout, navigation, params, setTitle }: Pl
 
   /** True once the question reached the reviewer; on failure the error shows and the asker keeps its text. */
   const ask = useCallback(
-    async (question: string, about: string): Promise<boolean> => {
+    async (question: string, about: string, quote?: string): Promise<boolean> => {
       try {
-        await discuss({ runId, message: `About ${about}:\n\n${question}` });
+        await discuss({ runId, message: askMessage(about, question, quote) });
         if (run?.agentId && navigation) openReviewerChat(navigation, { ...run, agentId: run.agentId }, layout.compact);
         else setNotice("Sent to the reviewer.");
         return true;
@@ -428,6 +433,12 @@ export function ReviewScreen({ theme, layout, navigation, params, setTitle }: Pl
   const keys = useRef<(key: string) => boolean>(() => false);
   useScreenKeys(root, (key) => keys.current(key));
 
+  /** What a selection starting at `node` is part of, as the question to the reviewer names it. */
+  const selectionAbout = (node: unknown) => {
+    for (const [card, path] of diffNode.current) if ((card as { contains(other: unknown): boolean }).contains(node)) return `this part of the diff of ${path}`;
+    return `this part of ${TAB_ABOUT[tab]}`;
+  };
+
   const muted = { color: theme.colors.foregroundMuted, fontSize: 13 };
   const pad = layout.compact ? 14 : 24;
   // A wide web pane gets the file tree as a pinned sidebar; elsewhere it's a list above the files you can fold.
@@ -552,14 +563,13 @@ export function ReviewScreen({ theme, layout, navigation, params, setTitle }: Pl
     return file ? (
       <View
         key={path}
-        ref={
-          track
-            ? (node) => {
-                if (node) fileNode.current.set(path, node);
-                else fileNode.current.delete(path);
-              }
-            : undefined
-        }
+        ref={(node) => {
+          if (node) diffNode.current.set(node, path);
+          else for (const [known, knownPath] of diffNode.current) if (knownPath === path) diffNode.current.delete(known);
+          if (!track) return;
+          if (node) fileNode.current.set(path, node);
+          else fileNode.current.delete(path);
+        }}
         onLayout={
           track
             ? (event) => {
@@ -685,7 +695,7 @@ export function ReviewScreen({ theme, layout, navigation, params, setTitle }: Pl
         </View>
 
         {/* Content */}
-        <View onLayout={(event) => (contentY.current = event.nativeEvent.layout.y)} style={{ paddingHorizontal: pad, paddingTop: 14, gap: 12, width: "100%", maxWidth, alignSelf: "center" }}>
+        <View ref={content} onLayout={(event) => (contentY.current = event.nativeEvent.layout.y)} style={{ paddingHorizontal: pad, paddingTop: 14, gap: 12, width: "100%", maxWidth, alignSelf: "center" }}>
           {tab === "summary" && showsRecap(recap, draft?.recap ?? recap?.ai ?? null) ? (
             <RecapView recap={recap} ai={draft?.recap ?? recap.ai} theme={theme} onOpen={openUrl} onSince={() => setTab("since")} onFiles={() => setTab("files")} />
           ) : null}
@@ -889,6 +899,7 @@ export function ReviewScreen({ theme, layout, navigation, params, setTitle }: Pl
               <Text style={muted}>No inline comments. Open a file and tap a line to add one.</Text>
             )
           ) : null}
+          {editable ? <SelectionAsk theme={theme} container={content} about={selectionAbout} onAsk={ask} resetKey={`${runId} ${tab}`} /> : null}
         </View>
       </ScrollView>
 
@@ -995,6 +1006,17 @@ export function ReviewScreen({ theme, layout, navigation, params, setTitle }: Pl
     </View>
   );
 }
+
+const TAB_ABOUT: Record<Tab, string> = {
+  summary: "your summary",
+  walkthrough: "your walkthrough",
+  since: "the changes since your last look",
+  files: "the files",
+  description: "the PR description",
+  github: "the checks and activity",
+  comments: "your comments",
+  preview: "the review as it will post",
+};
 
 // The client compiles without the DOM lib; the two DOM shapes `fileTop` reads on web.
 type Box = { getBoundingClientRect(): { top: number }; scrollTop: number };

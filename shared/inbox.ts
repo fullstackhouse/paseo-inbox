@@ -550,16 +550,33 @@ export function reviewRunFor(runs: readonly Run[], view: Pick<InboxView, "review
 /**
  * The composer pill on an inbox agent's chat, or null while its run has no draft to open. The agent's
  * latest run counts: a review moved to a new head keeps the agent. `postAs` is set while the draft can
- * be posted, for the menu's Post item; a posted review's pill only opens it.
+ * be posted, for the menu's Post item; otherwise `cantPost` says why, so the item explains itself instead
+ * of vanishing. A posted review's pill only opens it.
  */
-export function reviewPill(runs: readonly Run[], view: Pick<InboxView, "drafts" | "postable"> | null, agentId: string): { runId: string; posted: boolean; postAs: Verdict | null } | null {
+export function reviewPill(runs: readonly Run[], view: Pick<InboxView, "drafts" | "postable"> | null, agentId: string): { runId: string; posted: boolean; postAs: Verdict | null; cantPost: string | null } | null {
   const run = [...runs].reverse().find((candidate) => candidate.agentId === agentId);
   if (!run) return null;
   const postAs = view?.postable?.[run.id] ?? null;
-  if (run.reason?.startsWith("review posted")) return { runId: run.id, posted: true, postAs: null };
+  if (run.reason?.startsWith("review posted")) return { runId: run.id, posted: true, postAs: null, cantPost: null };
   // Not every "review …" reason: a requeued run reads "review requested again" while it drafts anew.
   const opens = run.reason?.startsWith("review drafted") || run.reason?.startsWith("review moved") || run.reason?.endsWith(DRAFT_BACK) || view?.drafts?.includes(run.id) || postAs !== null;
-  return opens ? { runId: run.id, posted: false, postAs } : null;
+  if (!opens) return null;
+  return { runId: run.id, posted: false, postAs, cantPost: postAs === null ? whyNotPostable(runs, run) : null };
+}
+
+/** Why a drafted run's review can't be posted from its chat: a later run of the same PR and rule comes first. */
+function whyNotPostable(runs: readonly Run[], run: Run): string {
+  const later = runs.slice(runs.indexOf(run) + 1).filter((candidate) => candidate.itemKey === run.itemKey && candidate.rule === run.rule);
+  const newer = later.at(-1);
+  if (later.some((candidate) => candidate.reason?.startsWith("review posted"))) return "a newer review is posted";
+  if (newer?.state === "needs-decision") return "a newer draft is waiting";
+  if (newer?.state === "queued" || newer?.state === "running") return "a newer review is being drafted";
+  // The review screen still posts a stale draft on its own commit; the chat only points there.
+  if (run.state === "stale") return `the PR moved on (${run.reason ?? "new push"}): post it from the review`;
+  const done = doneStatus(run);
+  // "Reviewed on GitHub" → "reviewed on GitHub": only the first letter, the rest may be a name.
+  if (done) return `${done.label.charAt(0).toLowerCase()}${done.label.slice(1)}`;
+  return "the draft isn't ready yet";
 }
 
 /** `https://github.com/o/r/pull/12` or `o/r#12` → repo and number. */
