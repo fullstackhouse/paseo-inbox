@@ -571,7 +571,8 @@ function whyNotPostable(runs: readonly Run[], run: Run): string {
   if (later.some((candidate) => candidate.reason?.startsWith("review posted"))) return "a newer review is posted";
   if (newer?.state === "needs-decision") return "a newer draft is waiting";
   if (newer?.state === "queued" || newer?.state === "running") return "a newer review is being drafted";
-  if (run.state === "stale") return `the PR moved on (${run.reason ?? "new push"})`;
+  // The review screen still posts a stale draft on its own commit; the chat only points there.
+  if (run.state === "stale") return `the PR moved on (${run.reason ?? "new push"}): post it from the review`;
   const done = doneStatus(run);
   // "Reviewed on GitHub" → "reviewed on GitHub": only the first letter, the rest may be a name.
   if (done) return `${done.label.charAt(0).toLowerCase()}${done.label.slice(1)}`;

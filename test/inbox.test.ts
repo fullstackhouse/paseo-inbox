@@ -342,12 +342,12 @@ describe("reviewPill", () => {
     const stale = run("old", { state: "stale", reason: "new push bbbbbbb" });
     const view = { drafts: ["old"] };
     const why = (...later: Run[]) => reviewPill([stale, ...later], view, "agent")?.cantPost;
-    expect(why()).toBe("the PR moved on (new push bbbbbbb)");
+    expect(why()).toBe("the PR moved on (new push bbbbbbb): post it from the review");
     expect(why(run("new", { version: "b", agentId: "next", state: "running" }))).toBe("a newer review is being drafted");
     expect(why(run("new", { version: "b", agentId: "next", reason: "review drafted: approve · 90%" }))).toBe("a newer draft is waiting");
     expect(why(run("new", { version: "b", agentId: "next", state: "done", reason: "review posted: https://x" }))).toBe("a newer review is posted");
     // Another rule's run on the same PR is a different review.
-    expect(why(run("qa", { rule: "qa", agentId: "next", state: "done", reason: "review posted: https://x" }))).toBe("the PR moved on (new push bbbbbbb)");
+    expect(why(run("qa", { rule: "qa", agentId: "next", state: "done", reason: "review posted: https://x" }))).toBe("the PR moved on (new push bbbbbbb): post it from the review");
     expect(reviewPill([run("r", { state: "done", reason: "reviewed on GitHub" })], { drafts: ["r"] }, "agent")?.cantPost).toBe("reviewed on GitHub");
   });
 });
