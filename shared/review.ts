@@ -27,6 +27,19 @@ const CommentInputSchema = z.object({
 
 const ChapterSchema = z.object({ title: z.string().min(1), body: z.string().default(""), files: z.array(z.string()).default([]) });
 
+/** A re-review's verdict on what happened since the human's last review (only when inbox_pr lists one). */
+export const RecapInputSchema = z.object({
+  /** Per earlier thread of the human's (id from inbox_pr): does the code now address it? */
+  comments: z.array(z.object({ thread: z.string().min(1), addressed: z.enum(["yes", "partly", "no"]), note: z.string().default("") })).default([]),
+  /** Changes since that review no comment covers: "logic" to look at, "mechanical" (renames, moves, formatting) to skim. */
+  changes: z.array(z.object({ path: z.string().min(1), risk: z.enum(["logic", "mechanical"]), note: z.string().default("") })).default([]),
+  /** "check": the listed things are enough; "full": read the whole PR again. */
+  look: z.enum(["check", "full"]),
+  check: z.array(z.string()).default([]),
+  why: z.string().default(""),
+});
+export type RecapInput = z.infer<typeof RecapInputSchema>;
+
 /** What the agent passes to `inbox_review_draft`. */
 export const ReviewInputSchema = z.object({
   verdict: VerdictSchema,
@@ -36,6 +49,7 @@ export const ReviewInputSchema = z.object({
   summary: z.string().min(1),
   chapters: z.array(ChapterSchema).default([]),
   comments: z.array(CommentInputSchema).default([]),
+  recap: RecapInputSchema.optional(),
 });
 export type ReviewInput = z.infer<typeof ReviewInputSchema>;
 
@@ -133,6 +147,7 @@ export const ReviseInputSchema = z.object({
   reasoning: z.string().optional(),
   summary: z.string().optional(),
   chapters: z.array(ChapterSchema).optional(),
+  recap: RecapInputSchema.optional(),
   edit: z.array(z.object({ id: z.string(), body: z.string().min(1).optional(), severity: SeveritySchema.optional() })).default([]),
   drop: z.array(z.string()).default([]),
   add: z.array(CommentInputSchema).default([]),
@@ -173,7 +188,7 @@ export function reviseDraft(draft: ReviewDraft, revision: ReviseInput): { draft:
     comments = [...comments, { ...comment, id, status: "draft", author: "ai", reply: false }];
     applied.push(`added ${id}`);
   }
-  const fields = { verdict: revision.verdict, confidence: revision.confidence, reasoning: revision.reasoning, summary: revision.summary, chapters: revision.chapters };
+  const fields = { verdict: revision.verdict, confidence: revision.confidence, reasoning: revision.reasoning, summary: revision.summary, chapters: revision.chapters, recap: revision.recap };
   const defined = Object.fromEntries(Object.entries(fields).filter(([, value]) => value !== undefined));
   for (const field of Object.keys(defined)) applied.push(`set ${field}`);
   return { draft: { ...draft, ...defined, comments }, refused, applied };
@@ -413,6 +428,8 @@ severity: "blocker" means you wouldn't approve with it in (data loss, a security
 
 verdict: any blocker means "request-changes"; no blocker means "approve". Use "comment" only when you graded nothing and have only questions. confidence (0-100) is how sure you are that this review is right, not how good an idea merging is.
 
+recap: only when ${PR_TOOL} has a "Your previous review" section. comments: for each of the human's threads listed there, whether the code now addresses it ("yes", "partly", "no") with a one-line note; check the code, don't trust the listed status. changes: every other file the diff since that review changes that no comment covers, "logic" for new behaviour worth reading, "mechanical" for renames, moves, formatting or generated code, with a one-line note. look: "check" with the few things to read (check) when that is enough, "full" when the changes are broad or there is no clean diff; why: one sentence. The summary, chapters and comments still cover the whole PR.
+
 already raised: if another reviewer's existing comment already makes your point, set raised to that comment's id instead of repeating it as new. The human then holds it back or posts it as a reply in that thread.
 
 If you can't run commands, this run is untrusted: the PR's author isn't on the human's trust list. Read the files and ${PR_TOOL}'s diff instead, and say in reasoning what you couldn't check by running.
@@ -431,6 +448,18 @@ const commentJson = {
     raised: { type: ["integer", "null"], description: "Id of an existing review comment (from inbox_pr) that already makes this point" },
   },
   required: ["path", "body"],
+};
+const recapJson = {
+  type: "object",
+  description: "Only when inbox_pr shows 'Your previous review': what happened since the human's last review",
+  properties: {
+    comments: { type: "array", items: { type: "object", properties: { thread: { type: "string", description: "Thread id from inbox_pr" }, addressed: { type: "string", enum: ["yes", "partly", "no"] }, note: { type: "string" } }, required: ["thread", "addressed"] } },
+    changes: { type: "array", items: { type: "object", properties: { path: { type: "string" }, risk: { type: "string", enum: ["logic", "mechanical"] }, note: { type: "string" } }, required: ["path", "risk"] } },
+    look: { type: "string", enum: ["check", "full"] },
+    check: { type: "array", items: { type: "string" } },
+    why: { type: "string" },
+  },
+  required: ["look"],
 };
 const chaptersJson = {
   type: "array",
@@ -455,6 +484,7 @@ export const TOOLS = [
         summary: { type: "string" },
         chapters: chaptersJson,
         comments: { type: "array", items: commentJson },
+        recap: recapJson,
       },
       required: ["verdict", "confidence", "summary"],
     },
@@ -470,6 +500,7 @@ export const TOOLS = [
         reasoning: { type: "string" },
         summary: { type: "string" },
         chapters: chaptersJson,
+        recap: recapJson,
         edit: { type: "array", items: { type: "object", properties: { id: { type: "string" }, body: { type: "string" }, severity: severityJson }, required: ["id"] } },
         drop: { type: "array", items: { type: "string" } },
         add: { type: "array", items: commentJson },
@@ -522,15 +553,18 @@ export function prState(details: Pick<PrDetails, "createdAt" | "closedAt" | "mer
   return { state: "open", at: details.createdAt };
 }
 
-/** The PR as an untrusted reviewer reads it: description, files and diff, and what others already said. */
-export function prContext(pr: { url: string; title: string }, details: PrDetails, maxChars = 180_000): string {
+/**
+ * The PR as an untrusted reviewer reads it: description, files and diff, and what others already said.
+ * `prior` (the human's previous review, see `priorSection`) goes before the full diff, so truncation cuts the diff first.
+ */
+export function prContext(pr: { url: string; title: string }, details: PrDetails, maxChars = 180_000, prior: readonly string[] = []): string {
   const header = [`# ${details.title || pr.title}`, pr.url, `${details.author} wants to merge ${details.headRef} into ${details.baseRef} at ${details.headSha} (+${details.additions} −${details.deletions}, ${details.changedFiles} files)`, "", "## Description", details.body.trim() || "(none)"];
   const threads = details.threads.length
     ? ["", "## Existing review comments (use their id as `raised` if your finding repeats one)", ...details.threads.map((thread) => `- id ${thread.id} · @${thread.author} · ${thread.path}${thread.line ? `:${thread.line}` : ""}${thread.inReplyTo ? ` (reply to ${thread.inReplyTo})` : ""}: ${thread.body.replace(/\s+/g, " ").slice(0, 400)}`)]
     : ["", "## Existing review comments", "(none)"];
   let diff = ["", "## Diff"];
   for (const file of details.files) diff.push("", `### ${file.status} ${file.path}${file.previousPath ? ` (was ${file.previousPath})` : ""} +${file.additions} −${file.deletions}`, file.patch ? "```diff\n" + file.patch + "\n```" : "(no patch: binary or too large)");
-  let text = [...header, ...threads, ...diff].join("\n");
+  let text = [...header, ...threads, ...(prior.length ? ["", ...prior] : []), ...diff].join("\n");
   if (text.length > maxChars) text = text.slice(0, maxChars) + "\n\n[... diff truncated; read the remaining files in the checkout ...]";
   return text;
 }

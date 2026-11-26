@@ -35,7 +35,9 @@ import {
   type ReviewDraft,
   type Severity,
 } from "../shared/review";
-import { reanchorReview, reviewSince, type Since } from "../shared/rereview";
+import { reviewRecap, type Recap } from "../shared/recap";
+import { reanchorReview, type Since } from "../shared/rereview";
+import { RecapView, showsRecap, SINCE_FROM } from "./Recap";
 import { askMessage } from "../shared/selection";
 import { AskBox, CommentCard } from "./CommentCard";
 import { HandoffPanel, PreviewPane } from "./Decide";
@@ -108,8 +110,9 @@ export function ReviewScreen({ theme, layout, navigation, params, setTitle }: Pl
   const people = useRpc(prPeople);
   const handoff = useRpc(handoffReview);
   const reanchor = useRpc(reanchorReview);
-  const fetchSince = useRpc(reviewSince);
-  const [since, setSince] = useState<Since | null>(null);
+  const fetchRecap = useRpc(reviewRecap);
+  const [recap, setRecap] = useState<Recap | null>(null);
+  const since: Since | null = recap?.since ?? null;
   const [sinceOpen, setSinceOpen] = useState<Set<string>>(new Set());
   const [handingOff, setHandingOff] = useState(false);
   const [askingSummary, setAskingSummary] = useState(false);
@@ -218,24 +221,24 @@ export function ReviewScreen({ theme, layout, navigation, params, setTitle }: Pl
     };
   }, [fetchDetails, itemKey]);
 
-  // "Changes since my last review": asked once the live head is known, again when the draft moves.
+  // "Since your review" (the diff since my last review, plus what happened to it): asked once the live head is known, again when the draft moves.
   const liveHead = details && detailsFor === itemKey ? details.headSha : null;
   const draftVersion = draft?.version;
   useEffect(() => {
     if (!runId || !liveHead) return;
     let live = true;
-    setSince(null);
-    void fetchSince({ runId })
+    setRecap(null);
+    void fetchRecap({ runId })
       .then((value) => {
         if (!live) return;
-        setSince(value);
-        setSinceOpen(new Set(value.kind === "changes" ? value.files.map((file) => file.path) : []));
+        setRecap(value);
+        setSinceOpen(new Set(value.since.kind === "changes" ? value.since.files.map((file) => file.path) : []));
       })
-      .catch(() => live && setSince(null));
+      .catch(() => live && setRecap(null));
     return () => {
       live = false;
     };
-  }, [fetchSince, runId, liveHead, draftVersion]);
+  }, [fetchRecap, runId, liveHead, draftVersion]);
 
   const files = details?.files ?? [];
   // Like Cerber and GitHub, diffs (with their comments) start open; big uncommented files fold
@@ -693,6 +696,9 @@ export function ReviewScreen({ theme, layout, navigation, params, setTitle }: Pl
 
         {/* Content */}
         <View ref={content} onLayout={(event) => (contentY.current = event.nativeEvent.layout.y)} style={{ paddingHorizontal: pad, paddingTop: 14, gap: 12, width: "100%", maxWidth, alignSelf: "center" }}>
+          {tab === "summary" && showsRecap(recap, draft?.recap ?? recap?.ai ?? null) ? (
+            <RecapView recap={recap} ai={draft?.recap ?? recap.ai} theme={theme} onOpen={openUrl} onSince={() => setTab("since")} onFiles={() => setTab("files")} />
+          ) : null}
           {!draft && tab !== "description" && tab !== "files" && tab !== "github" ? (
             drafting ? (
               <View style={{ gap: 10, alignItems: "flex-start", backgroundColor: theme.colors.surface1, borderRadius: 10, padding: 14 }}>
@@ -1015,8 +1021,6 @@ const TAB_ABOUT: Record<Tab, string> = {
 // The client compiles without the DOM lib; the two DOM shapes `fileTop` reads on web.
 type Box = { getBoundingClientRect(): { top: number }; scrollTop: number };
 
-const SINCE_FROM = { draft: "this draft's commit", reviewed: "the commit the summary was written for", posted: "your last review" } as const;
-
 /** What changed since the commit the human last reviewed: its commits, then each changed file's diff. */
 function SinceView({
   since,
@@ -1054,8 +1058,9 @@ function SinceView({
     <>
       <Text style={muted}>
         Since {what} → {since.head.slice(0, 7)}: {since.commits.length} commit{since.commits.length === 1 ? "" : "s"}, {since.files.length} file{since.files.length === 1 ? "" : "s"}
-        {since.hidden ? `, plus ${since.hidden} the PR doesn't change (merged from the base branch), left out` : ""}.
+        {since.hidden ? `, plus ${since.incomplete ? "at least " : ""}${since.hidden} the PR doesn't change (merged from the base branch), left out` : ""}.
       </Text>
+      {since.incomplete ? <Text style={{ color: theme.colors.statusWarning, fontSize: 13 }}>GitHub lists at most 300 changed files and the full list couldn't be read, so some of the PR's files may be missing here. Check them in Files.</Text> : null}
       {since.commits.length ? (
         <View style={{ gap: 4, backgroundColor: theme.colors.surface1, borderRadius: 10, padding: 10 }}>
           {since.commits.map((commit) => (

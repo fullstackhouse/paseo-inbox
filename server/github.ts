@@ -2,6 +2,7 @@ import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import { z } from "zod";
 import { parsePrRef, prKey, type Checks, type Pr, type PrOutcome } from "../shared/inbox";
+import { unifiedPatch } from "../shared/linediff";
 
 export { parsePrRef };
 
@@ -283,10 +284,70 @@ export async function compareCommits(repo: string, base: string, head: string, r
     behindBy: parsed.behind_by,
     commits: parsed.commits.map((commit) => ({ sha: commit.sha, message: commit.commit.message })),
     files: parsed.files.map(toPrFile),
+    truncated: parsed.files.length >= COMPARE_FILE_CAP,
   };
 }
 
+/** GitHub's compare lists at most this many files. */
+const COMPARE_FILE_CAP = 300;
+
+const TreeSchema = z.object({ truncated: z.boolean(), tree: z.array(z.tuple([z.string(), z.string()])) });
+
+/** Path → blob SHA of every file at a commit; null when GitHub cut the tree short (a very big repo). */
+async function blobsAt(repo: string, sha: string, run: Gh): Promise<Map<string, string> | null> {
+  const out = await run(["api", `repos/${repo}/git/trees/${sha}?recursive=1`, "--jq", '{truncated, tree: [.tree[] | select(.type == "blob") | [.path, .sha]]}']);
+  const tree = TreeSchema.parse(JSON.parse(out));
+  return tree.truncated ? null : new Map(tree.tree);
+}
+
+async function blobText(repo: string, sha: string, run: Gh): Promise<string> {
+  const blob = z.object({ content: z.string(), encoding: z.string() }).parse(JSON.parse(await run(["api", `repos/${repo}/git/blobs/${sha}`])));
+  return blob.encoding === "base64" ? Buffer.from(blob.content, "base64").toString("utf8") : blob.content;
+}
+
+/**
+ * A compare that hit GitHub's 300-file cap, made whole for the PR's files: the two commits' trees say
+ * exactly which files changed (and how many in all), and the PR files the compare left out get their
+ * patch rebuilt from the two blobs. `totalFiles` counts as `git diff --no-renames` does (a rename is two
+ * files). Null when that isn't possible (a tree GitHub cut short).
+ */
+export async function completeCompare(repo: string, base: string, head: string, compare: import("../shared/rereview").Compare, prPaths: ReadonlySet<string>, run: Gh = gh): Promise<import("../shared/rereview").Compare | null> {
+  const [before, after] = await Promise.all([blobsAt(repo, base, run), blobsAt(repo, head, run)]);
+  if (!before || !after) return null;
+  const changed = [...new Set([...before.keys(), ...after.keys()])].filter((path) => before.get(path) !== after.get(path));
+  const listed = new Map(compare.files.map((file) => [file.path, file]));
+  const files: PrDetails["files"] = [];
+  for (const path of changed.filter((candidate) => prPaths.has(candidate))) {
+    const known = listed.get(path);
+    if (known) {
+      files.push(known);
+      continue;
+    }
+    const [from, to] = [before.get(path), after.get(path)];
+    const [oldText, newText] = await Promise.all([from ? blobText(repo, from, run) : "", to ? blobText(repo, to, run) : ""]);
+    const status = !from ? "added" : !to ? "removed" : "modified";
+    // Binary files, and ones too far apart to diff cheaply, show without a patch, as GitHub does.
+    const diff = oldText.includes("\0") || newText.includes("\0") ? null : unifiedPatch(oldText, newText);
+    files.push({ path, status, additions: diff?.additions ?? 0, deletions: diff?.deletions ?? 0, patch: diff?.patch || undefined });
+  }
+  return { ...compare, files, truncated: false, totalFiles: changed.length };
+}
+
+/** GitHub lists at most this many of a PR's commits: the oldest ones. */
+const PR_COMMIT_CAP = 250;
+
+/**
+ * The PR's own commits (not the base branch's ones a merge brought in). Undefined once the list is full:
+ * GitHub's 250 are the oldest, so newer commits would be missing and nothing should be filtered by it.
+ */
+export async function prCommits(repo: string, number: number, run: Gh = gh): Promise<Set<string> | undefined> {
+  const pages = await run(["api", "--paginate", "--slurp", `repos/${repo}/pulls/${number}/commits?per_page=100`]);
+  const shas = z.array(z.array(z.object({ sha: z.string() }))).parse(JSON.parse(pages)).flat().map((commit) => commit.sha);
+  return shas.length >= PR_COMMIT_CAP ? undefined : new Set(shas);
+}
+
 const ReviewSchema = z.object({
+  id: z.number(),
   user: z.object({ login: z.string() }).nullish(),
   state: z.string(),
   commit_id: z.string().nullish(),
@@ -294,16 +355,23 @@ const ReviewSchema = z.object({
   html_url: z.string(),
 });
 
-/** The latest review `me` submitted on the PR (not a pending one), with the commit it was on. */
-export async function latestReviewBy(repo: string, number: number, me: string, run: Gh = gh): Promise<import("../shared/rereview").MyReview | null> {
+type MyReview = import("../shared/rereview").MyReview;
+
+/** Every review `me` submitted on the PR (not pending ones), newest first, with the commit each was on. */
+export async function reviewsBy(repo: string, number: number, me: string, run: Gh = gh): Promise<MyReview[]> {
   const pages = await run(["api", "--paginate", "--slurp", `repos/${repo}/pulls/${number}/reviews?per_page=100`]);
-  const mine = z
+  return z
     .array(z.array(ReviewSchema))
     .parse(JSON.parse(pages))
     .flat()
     .filter((review) => review.user?.login.toLowerCase() === me.toLowerCase() && review.state !== "PENDING" && review.commit_id && review.submitted_at)
-    .sort((a, b) => Date.parse(b.submitted_at!) - Date.parse(a.submitted_at!))[0];
-  return mine ? { commit: mine.commit_id!, at: mine.submitted_at!, url: mine.html_url } : null;
+    .sort((a, b) => Date.parse(b.submitted_at!) - Date.parse(a.submitted_at!))
+    .map((review) => ({ id: String(review.id), state: review.state, commit: review.commit_id!, at: review.submitted_at!, url: review.html_url }));
+}
+
+/** The latest review `me` submitted on the PR, with the commit it was on. */
+export async function latestReviewBy(repo: string, number: number, me: string, run: Gh = gh): Promise<MyReview | null> {
+  return (await reviewsBy(repo, number, me, run))[0] ?? null;
 }
 
 const OutcomeSchema = z.object({

@@ -1,4 +1,4 @@
-import { fetchPrDeployments, fetchPrUpstream } from "./server/upstream";
+import { fetchPrDeployments, fetchPrUpstream, fetchThreads } from "./server/upstream";
 import { getPrDeployments, getPrUpstream, previewPrDeployments, previewPrUpstream } from "./shared/upstream";
 import type { PaseoApi, PaseoWorkspaceHandle } from "@getpaseo/client";
 import type { PluginServerContext } from "@getpaseo/plugin/server";
@@ -7,9 +7,10 @@ import { installBridge } from "./server/bridge";
 import { openInBrowser } from "./server/open";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { compareCommits, ghWithInput, GithubMembership, GithubSource, latestReviewBy, postPullReview, prOutcome, PrDetailsCache, reviewRequests, whoami } from "./server/github";
-import { filesAt, reanchorRun, sinceRun } from "./server/rereview";
-import { reanchorReview, reviewSince } from "./shared/rereview";
+import { compareCommits, completeCompare, ghWithInput, GithubMembership, GithubSource, latestReviewBy, postPullReview, prCommits, prOutcome, PrDetailsCache, reviewRequests, reviewsBy, whoami } from "./server/github";
+import { CompareCache, filesAt, reanchorRun, recapRun, sinceRun } from "./server/rereview";
+import { priorSection, reviewRecap } from "./shared/recap";
+import { reanchorReview, reviewSince, type Compare } from "./shared/rereview";
 import { Inbox, type StartRequest } from "./server/inbox";
 import { listen } from "./server/listener";
 import { handoffDraft, postDraft, previewDraft } from "./server/post";
@@ -149,6 +150,16 @@ export default function contribute(server: PluginServerContext) {
   let login: Promise<string> | null = null;
   const me = () => (login ??= whoami().catch((error) => ((login = null), Promise.reject(error))));
   const compare = (repo: string, base: string, head: string) => compareCommits(repo, base, head);
+  const sinceDeps = {
+    details,
+    me,
+    latestReview: (repo: string, number: number, who: string) => latestReviewBy(repo, number, who),
+    compare,
+    complete: (repo: string, base: string, head: string, partial: Compare, prPaths: ReadonlySet<string>) => completeCompare(repo, base, head, partial, prPaths),
+    ownCommits: (repo: string, number: number) => prCommits(repo, number),
+    cache: new CompareCache(),
+  };
+  const recapDeps = { ...sinceDeps, threads: (repo: string, number: number) => fetchThreads(repo, number), reviewsBy: (repo: string, number: number, who: string) => reviewsBy(repo, number, who) };
   const draftFilesAt = filesAt((repo, number, sha) => prDetails.cachedFiles(repo, number, sha), compare);
   // An empty gh config for untrusted runs: gh there has no account to speak for.
   const emptyGh = join(dir, "untrusted-gh");
@@ -443,7 +454,11 @@ export default function contribute(server: PluginServerContext) {
   });
   server.handle(reviewSince, ({ runId }, { paseo: api }) => {
     capture(api);
-    return sinceRun(inbox, reviews, runId, { details, me, latestReview: (repo, number, login) => latestReviewBy(repo, number, login), compare });
+    return sinceRun(inbox, reviews, runId, sinceDeps);
+  });
+  server.handle(reviewRecap, ({ runId }, { paseo: api }) => {
+    capture(api);
+    return recapRun(inbox, reviews, runId, recapDeps);
   });
   server.handle(previewReview, ({ runId }, { paseo: api }) => {
     capture(api);
@@ -506,7 +521,7 @@ export default function contribute(server: PluginServerContext) {
   const listening = listen(dir, {
     "/instructions": async () => ({ instructions: INSTRUCTIONS }),
     "/tools": async () => ({ tools: TOOLS }),
-    "/call": async ({ agentId, name, arguments: args }) => callTool(inbox, reviews, agentId ?? null, name, args, undefined, details),
+    "/call": async ({ agentId, name, arguments: args }) => callTool(inbox, reviews, agentId ?? null, name, args, undefined, details, async (runId) => priorSection(await recapRun(inbox, reviews, runId, recapDeps))),
   });
 
   // Poll on the configured interval; the config is re-read every tick, so edits apply without a reload.

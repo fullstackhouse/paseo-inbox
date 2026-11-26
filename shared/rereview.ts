@@ -109,8 +109,8 @@ export function reanchorDraft(draft: ReviewDraft, oldFiles: readonly PrFile[] | 
 
 // ---------- Changes since my last review ----------
 
-/** The human's latest review of this PR on GitHub. */
-export type MyReview = { commit: string; at: string; url: string };
+/** One of the human's submitted reviews of this PR on GitHub; `state` is GitHub's (APPROVED, COMMENTED…). */
+export type MyReview = { commit: string; at: string; url: string; id?: string; state?: string };
 
 export type SinceBase = { sha: string; from: "draft" | "reviewed" | "posted"; at?: string };
 
@@ -125,8 +125,12 @@ export function sinceBase(draft: Pick<ReviewDraft, "version" | "reviewedVersion"
   return mine ? { sha: mine.commit, from: "posted", at: mine.at } : null;
 }
 
-/** GitHub's compare of base...head, as the server reads it; null when base is gone (force-pushed away). */
-export type Compare = { status: string; behindBy: number; commits: { sha: string; message: string }[]; files: PrFile[] };
+/**
+ * GitHub's compare of base...head, as the server reads it; null when base is gone (force-pushed away).
+ * GitHub lists at most 300 files: `truncated` says the list hit that cap, `totalFiles` is the real count
+ * once the server worked it out another way.
+ */
+export type Compare = { status: string; behindBy: number; commits: { sha: string; message: string }[]; files: PrFile[]; truncated?: boolean; totalFiles?: number };
 
 export const SinceSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("none") }),
@@ -142,6 +146,8 @@ export const SinceSchema = z.discriminatedUnion("kind", [
     files: z.array(PrFileSchema),
     /** Files the compare shows that aren't in the PR: the base branch merged in. */
     hidden: z.number(),
+    /** GitHub listed only part of the diff: PR files may be missing, and `hidden` is a lower bound. */
+    incomplete: z.boolean().optional(),
   }),
 ]);
 export type Since = z.infer<typeof SinceSchema>;
@@ -151,7 +157,7 @@ export type Since = z.infer<typeof SinceSchema>;
  * or rebase), has no clean "since" diff, so the screen says so and points at the full diff. Files the
  * PR doesn't change are left out: they came from merging the base branch in.
  */
-export function sinceChanges(base: SinceBase | null, head: string, compare: Compare | null, prPaths: ReadonlySet<string>): Since {
+export function sinceChanges(base: SinceBase | null, head: string, compare: Compare | null, prPaths: ReadonlySet<string>, own?: ReadonlySet<string>): Since {
   if (!base) return { kind: "none" };
   const about = { base: base.sha, from: base.from, ...(base.at ? { at: base.at } : {}) };
   if (base.sha === head) return { kind: "same", ...about };
@@ -159,7 +165,10 @@ export function sinceChanges(base: SinceBase | null, head: string, compare: Comp
   if (compare.status === "identical") return { kind: "same", ...about };
   if (compare.status === "diverged" || compare.status === "behind" || compare.behindBy > 0) return { kind: "rewritten", ...about, why: "diverged" };
   const files = compare.files.filter((file) => prPaths.has(file.path));
-  return { kind: "changes", ...about, head, commits: compare.commits, files, hidden: compare.files.length - files.length };
+  // `own` (the PR's commits) leaves out the base branch's commits that a merge brought in.
+  const commits = own ? compare.commits.filter((commit) => own.has(commit.sha)) : compare.commits;
+  const hidden = (compare.totalFiles ?? compare.files.length) - files.length;
+  return { kind: "changes", ...about, head, commits, files, hidden, ...(compare.truncated ? { incomplete: true } : {}) };
 }
 
 // ---------- Asked again ----------
