@@ -580,6 +580,15 @@ function whyNotPostable(runs: readonly Run[], run: Run): string {
 }
 
 /** `https://github.com/o/r/pull/12` or `o/r#12` → repo and number. */
+/**
+ * A GitHub link a click can open in the review screen. `#123` in chat resolves to `/issues/123` even for a PR
+ * (GitHub redirects), so an issues link is only maybe a PR. Sub-pages (`/files`, `#discussion…`) count.
+ */
+export function prLink(url: string): { ref: string; maybeIssue: boolean } | null {
+  const match = /^https:\/\/github\.com\/([\w.-]+\/[\w.-]+)\/(pull|issues)\/(\d+)(?:[/?#].*)?$/.exec(url);
+  return match ? { ref: `${match[1]}#${match[3]}`, maybeIssue: match[2] === "issues" } : null;
+}
+
 export function parsePrRef(ref: string): { repo: string; number: number } | null {
   const url = /github\.com\/([\w.-]+\/[\w.-]+)\/pull\/(\d+)/.exec(ref);
   if (url) return { repo: url[1]!, number: Number(url[2]) };

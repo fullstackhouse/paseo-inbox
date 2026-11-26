@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ConfigSchema, DISMISSED, doneStatus, failureStatus, draftsReviews, explainedReason, globToRegExp, groupRuns, isMine, listedRuns, runsFor, whoseCounts, matchesQuery, mismatch, needsDecisionCount, opensReview, plan, renderPrompt, requeue, reviewPill, reviewRunFor, runId, runningDetail, setRun, startable, type Run } from "../shared/inbox";
+import { ConfigSchema, DISMISSED, doneStatus, failureStatus, draftsReviews, explainedReason, globToRegExp, groupRuns, isMine, listedRuns, runsFor, whoseCounts, matchesQuery, mismatch, needsDecisionCount, opensReview, plan, prLink, renderPrompt, requeue, reviewPill, reviewRunFor, runId, runningDetail, setRun, startable, type Run } from "../shared/inbox";
 import { config, emptyState, later, NOW, pr } from "./fixtures";
 
 const states = (state: ReturnType<typeof plan>) => state.runs.map((run) => [run.rule, run.version, run.state]);
@@ -424,5 +424,20 @@ describe("doneStatus", () => {
   });
   it("is null for runs that aren't done", () => {
     expect(doneStatus({ ...done(DISMISSED), state: "stale" })).toBeNull();
+  });
+});
+
+describe("prLink", () => {
+  it("opens PR links and PR sub-pages", () => {
+    expect(prLink("https://github.com/o/r/pull/12")).toEqual({ ref: "o/r#12", maybeIssue: false });
+    expect(prLink("https://github.com/o/r.js/pull/12/files#diff-1")).toEqual({ ref: "o/r.js#12", maybeIssue: false });
+  });
+  it("treats an issues link, which #123 shorthand resolves to, as maybe a PR", () => {
+    expect(prLink("https://github.com/o/r/issues/7")).toEqual({ ref: "o/r#7", maybeIssue: true });
+  });
+  it("leaves other links alone", () => {
+    for (const url of ["https://github.com/o/r", "https://github.com/o/r/pulls", "https://github.com/o/r/pull/12x", "https://gitlab.com/o/r/pull/1", "http://github.com/o/r/pull/1"]) {
+      expect(prLink(url)).toBeNull();
+    }
   });
 });
