@@ -159,8 +159,6 @@ export const splitPath = (path: string) => {
   return { dir: path.slice(0, cut), name: path.slice(cut) };
 };
 
-/** The reviewer's other changes, logic before mechanical (stable within each). */
-export const triage = <T extends { risk: "logic" | "mechanical" }>(changes: readonly T[]): T[] => [...changes].sort((a, b) => (a.risk === b.risk ? 0 : a.risk === "logic" ? -1 : 1));
 
 /** "Check 2 things" or "Full re-look". */
 export const lookLabel = (ai: Pick<RecapInput, "look" | "check">) =>
