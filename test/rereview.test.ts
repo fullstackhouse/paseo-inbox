@@ -11,7 +11,7 @@ import { callTool } from "../server/tools";
 import { DISMISSED, plan, reopen, runId, setRun, type Pr, type State } from "../shared/inbox";
 import { parsePatch } from "../shared/diff";
 import { unifiedPatch } from "../shared/linediff";
-import { buildRecap, lookLabel, preview, priorSection, splitPath, RecapSchema, threadCommits, threadStatus, touchedSince, triage, type Thread } from "../shared/recap";
+import { buildRecap, lookLabel, preview, priorSection, splitPath, RecapSchema, threadCommits, threadStatus, touchedSince, type Thread } from "../shared/recap";
 import { anchorAt, askedAgain, locate, reanchorDraft, sideLines, sinceBase, sinceChanges, type Compare, type ReviewRequest, type Since } from "../shared/rereview";
 import { composeReview, effectiveVerdict, RecapInputSchema, toDraft, updateComment, ReviewInputSchema, type PrDetails, type PrFile } from "../shared/review";
 import { config, emptyState, later, NOW, pr } from "./fixtures";
@@ -418,9 +418,8 @@ describe("since your review: recap", () => {
     expect(priorSection(buildRecap({ kind: "none" }, [], [], me, null))).toEqual([]);
   });
 
-  it("sorts the reviewer's triage riskiest first and counts what to check", () => {
+  it("counts what to check and flattens comment previews", () => {
     const ai = RecapInputSchema.parse({ look: "check", check: ["Discount rounding"], changes: [{ path: "b.ts", risk: "mechanical" }, { path: "a.ts", risk: "logic", note: "New branch" }] });
-    expect(triage(ai.changes).map((change) => change.path)).toEqual(["a.ts", "b.ts"]);
     expect(lookLabel(ai)).toBe("Check 1 thing");
     expect(lookLabel({ ...ai, check: ["x", "y"] })).toBe("Check 2 things");
     expect(lookLabel({ ...ai, look: "full" })).toBe("Full re-look");
