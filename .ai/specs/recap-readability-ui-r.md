@@ -24,3 +24,7 @@
 - **Shows.** Title "SINCE YOUR REVIEW"; "2 commits, 15 files since your last review (3cfa72c, 3h ago)." with a "Since 3cfa72c" chip; the look pill and reason; YOUR REVIEWS; YOUR COMMENTS · 1 fixed; OTHER CHANGES · 6 logic changes; MECHANICAL · 7 files.
 - **Variants.** Full re-look with one fixed comment, logic and mechanical changes (the PR in the report); the same with mechanical changes shown; Check N things with an unanswered and a pushed-back comment; no new commits; the reviewer hasn't written its verdicts yet; phone width.
 - **Edge cases.** Force-pushed or rebased branch → "The branch was force-pushed or rebased since your last review (3cfa72c), so there's no clean diff of what changed. Review it in full." with Open Files. Over 300 changed files → "GitHub lists at most 300 changed files and the full list couldn't be read, so 1 comment is marked unknown: check it in the diff." GitHub unreadable → the since line and the look stay, reviews and comment statuses go, and the panel ends in red with "Couldn't read your earlier comments: <GitHub's error>".
+
+## Decisions (R, 2026-11-26)
+
+1. Mechanical changes fold into one line of file names by default; "Show mechanical changes" expands them in place (R1-s1, R1-s2).
