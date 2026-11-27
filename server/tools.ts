@@ -6,33 +6,37 @@ import type { ReviewStore } from "./reviews";
 
 export const PREAPPROVED: McpToolRef[] = TOOLS.map((tool) => ({ kind: "mcp", server: MCP_SERVER, tool: tool.name }));
 
-/**
- * Providers whose Paseo adapter enforces exact MCP tool grants. Paseo rejects `toolPolicy` for any other
- * provider ("cannot preapprove exact MCP tools"), so a review run on Copilot, Pi, ACP, Antigravity or Muse
- * would fail to start. Paseo doesn't tell plugins which providers these are yet, so the list mirrors the
- * host's adapters; elsewhere the tools still attach and `permissionAnswer` decides each call.
- */
-const EXACT_GRANT_PROVIDERS = new Set(["claude", "codex", "opencode"]);
-
-export function supportsExactToolGrants(provider: string): boolean {
-  return EXACT_GRANT_PROVIDERS.has(provider.split("/")[0] ?? provider);
-}
-
 interface AgentToolConfig {
   provider: string;
   mcpServers?: Record<string, unknown>;
   toolPolicy?: { preapproved: McpToolRef[] };
 }
 
-/** Attaches the inbox MCP server, and preapproves its tools where the provider can hold an exact grant. */
-export function withInboxTools<T extends AgentToolConfig>(config: T, mcp: unknown): T & Pick<AgentToolConfig, "toolPolicy"> {
+/**
+ * Attaches the inbox MCP server, and preapproves its tools where the provider can hold an exact grant
+ * (`toolGrantSupport`). Elsewhere the tools still attach and `permissionAnswer` decides each call.
+ */
+export function withInboxTools<T extends AgentToolConfig>(
+  config: T,
+  mcp: unknown,
+  exactGrants: boolean,
+): T & Pick<AgentToolConfig, "toolPolicy"> {
   const attached = { ...config, mcpServers: { ...config.mcpServers, [MCP_SERVER]: mcp } };
-  if (!supportsExactToolGrants(config.provider)) return attached;
+  if (!exactGrants) return attached;
   return { ...attached, toolPolicy: { preapproved: [...(config.toolPolicy?.preapproved ?? []), ...PREAPPROVED] } };
 }
 
-export function isInboxPermission(request: Pick<AgentPermissionRequest, "kind" | "name" | "metadata">): boolean {
+/**
+ * Whether a permission request is for one of the inbox tools. `tool` is the host's provider-neutral
+ * name for it (fullstackhouse/paseo#288); without it, match the provider's own names.
+ */
+export function isInboxPermission(
+  request: Pick<AgentPermissionRequest, "kind" | "name" | "metadata">,
+  tool?: { server: string },
+): boolean {
   if (request.kind !== "tool") return false;
+  if (tool) return tool.server === MCP_SERVER;
+  // COMPAT(pluginToolGrants): hosts before #288 send no `tool`. Remove after 2027-05-31.
   if (request.name.startsWith(`mcp__${MCP_SERVER}__`)) return true;
   return request.name === "CodexMcpElicitation" && request.metadata?.serverName === MCP_SERVER;
 }
@@ -42,8 +46,12 @@ export function isInboxPermission(request: Pick<AgentPermissionRequest, "kind" |
  * read-only (untrusted) run, reading passes and everything else is denied; otherwise it's not ours to
  * answer (null), and the agent's own mode decides.
  */
-export function permissionAnswer(request: Pick<AgentPermissionRequest, "kind" | "name" | "metadata">, trusted: boolean | undefined): "allow" | "deny" | null {
-  if (isInboxPermission(request)) return "allow";
+export function permissionAnswer(
+  request: Pick<AgentPermissionRequest, "kind" | "name" | "metadata">,
+  trusted: boolean | undefined,
+  tool?: { server: string },
+): "allow" | "deny" | null {
+  if (isInboxPermission(request, tool)) return "allow";
   if (trusted !== false) return null;
   return request.kind === "tool" && untrustedAllows(request.name, MCP_SERVER) ? "allow" : "deny";
 }

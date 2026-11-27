@@ -18,6 +18,7 @@ import { ReviewStore } from "./server/reviews";
 import { addToConfigFile, findClone } from "./server/checkouts";
 import { configPath, dataDir, expandCheckouts, loadConfig, StateStore } from "./server/store";
 import { callTool, permissionAnswer, withInboxTools } from "./server/tools";
+import { toolGrantSupport } from "./server/tool-grants";
 import { addCheckout, addPr, findCheckout, isUnconfigured, listInbox, parsePrRef, pollNow, restoreRun, runNow, skipRun, type Config } from "./shared/inbox";
 import { inboxSettings, readLegacyConfig } from "./shared/settings";
 import { decideTrust } from "./shared/trust";
@@ -254,17 +255,23 @@ export default function contribute(server: PluginServerContext) {
     }, load: () => store.load(), save: (state) => store.save(state) });
 
   // Inbox agents, and only those, get the review-draft tool.
-  server.before("agent.create", ({ request }, { paseo: api }) => {
+  const exactGrants = toolGrantSupport(async () => {
+    if (!paseo) throw new Error("no daemon session yet");
+    return paseo.providers.snapshot();
+  });
+  server.before("agent.create", async ({ request }, { paseo: api }) => {
     capture(api);
     if (!request.env?.[RUN_ENV]) return;
-    return { ...request, config: withInboxTools(request.config, mcp) };
+    return { ...request, config: withInboxTools(request.config, mcp, await exactGrants(request.config.provider)) };
   });
   // Asking modes prompt even for preapproved MCP tools; these only read the PR or save a draft locally.
   // For a read-only (untrusted) run this hook is the gate: reads and inbox tools pass, the rest is denied.
-  server.on("agent.permission_requested", async ({ agent, request }, { paseo: api }) => {
+  server.on("agent.permission_requested", async (event, { paseo: api }) => {
+    const { agent, request } = event;
     capture(api);
     if (!inbox.isInboxAgent(agent.id)) return;
-    const answer = permissionAnswer(request, inbox.runForAgent(agent.id)?.trusted);
+    const tool = (event as { tool?: { server: string } }).tool;
+    const answer = permissionAnswer(request, inbox.runForAgent(agent.id)?.trusted, tool);
     if (!answer) return;
     await api.agents.ref(agent.id).respondToPermission({
       requestId: request.id,

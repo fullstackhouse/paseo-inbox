@@ -69,6 +69,11 @@ describe("permission answers", () => {
     expect(permissionAnswer(tool("Bash"), true)).toBeNull();
     expect(permissionAnswer(tool("Bash"), undefined)).toBeNull();
   });
+
+  it("recognizes inbox tools by the host's provider-neutral tool on any provider", () => {
+    expect(permissionAnswer(tool("inbox.inbox_review_draft"), true, { server: "inbox" })).toBe("allow");
+    expect(permissionAnswer(tool("mcp__inbox__inbox_review_draft"), true, { server: "prs" })).toBeNull();
+  });
 });
 
 describe("already raised", () => {
@@ -193,19 +198,15 @@ describe("withInboxTools", () => {
   const mcp = { type: "stdio" as const, command: "node", args: ["bridge.js"] };
   const base = { cwd: "/repo", mcpServers: { other: mcp } };
 
-  it("attaches the inbox MCP server and preapproves its tools for providers that enforce exact grants", () => {
-    for (const provider of ["claude", "codex", "opencode", "codex/gpt-5"]) {
-      const config = withInboxTools({ ...base, provider }, mcp);
-      expect(config.mcpServers).toMatchObject({ other: mcp, inbox: mcp });
-      expect(config.toolPolicy?.preapproved.map((grant) => grant.server)).toContain("inbox");
-    }
+  it("attaches the inbox MCP server and preapproves its tools where the provider holds exact grants", () => {
+    const config = withInboxTools({ ...base, provider: "codex/gpt-5" }, mcp, true);
+    expect(config.mcpServers).toMatchObject({ other: mcp, inbox: mcp });
+    expect(config.toolPolicy?.preapproved.map((grant) => grant.server)).toContain("inbox");
   });
 
-  it("attaches the server but adds no tool policy for providers that can't preapprove, so the review agent still starts", () => {
-    for (const provider of ["copilot", "pi", "antigravity", "muse", "mock"]) {
-      const config = withInboxTools({ ...base, provider }, mcp);
-      expect(config.mcpServers).toMatchObject({ inbox: mcp });
-      expect(config.toolPolicy).toBeUndefined();
-    }
+  it("attaches the server but adds no tool policy where the provider can't preapprove", () => {
+    const config = withInboxTools({ ...base, provider: "copilot" }, mcp, false);
+    expect(config.mcpServers).toMatchObject({ inbox: mcp });
+    expect(config.toolPolicy).toBeUndefined();
   });
 });
