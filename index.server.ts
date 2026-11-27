@@ -1,3 +1,4 @@
+import { PrFollows } from "./server/follows";
 import { fetchPrDeployments, fetchPrUpstream, fetchThreads } from "./server/upstream";
 import { getPrDeployments, getPrUpstream, previewPrDeployments, previewPrUpstream } from "./shared/upstream";
 import type { PaseoApi, PaseoWorkspaceHandle } from "@getpaseo/client";
@@ -19,7 +20,7 @@ import { addToConfigFile, findClone } from "./server/checkouts";
 import { configPath, dataDir, expandCheckouts, loadConfig, StateStore } from "./server/store";
 import { callTool, permissionAnswer, withInboxTools } from "./server/tools";
 import { toolGrantSupport } from "./server/tool-grants";
-import { addCheckout, addPr, findCheckout, isUnconfigured, listInbox, parsePrRef, pollNow, restoreRun, runNow, skipRun, type Config } from "./shared/inbox";
+import { addCheckout, addPr, findCheckout, isUnconfigured, listInbox, parsePrRef, pollNow, restoreRun, runNow, SETTLED_STATES, skipRun, type Config } from "./shared/inbox";
 import { inboxSettings, readLegacyConfig } from "./shared/settings";
 import { decideTrust } from "./shared/trust";
 import {
@@ -316,7 +317,23 @@ export default function contribute(server: PluginServerContext) {
   server.on("agent.closed", ({ agent }) => inbox.agentGone(agent.id));
   server.on("agent.archived", ({ agent }) => inbox.agentGone(agent.id));
 
-  const view = () => ({ ...inbox.view(), reviewLocation: fromSettings?.reviewLocation ?? "main" });
+  // Live checks of open runs' PRs and the review screen's deployments, pushed by the host's PR service.
+  const follows = new PrFollows(() => paseo);
+  /** The inbox view with each open run's PR checks as the host's PR service last pushed them (the search's are older). */
+  const view = async () => {
+    const base = inbox.view();
+    const open = base.runs.filter((run) => !SETTLED_STATES.has(run.state)).map((run) => base.items[run.itemKey]).filter((item) => item !== undefined);
+    if (!follows.available || !open.length) return { ...base, reviewLocation: fromSettings?.reviewLocation ?? "main" };
+    const urls = [...new Set(open.map((item) => item.pr.url))];
+    const live = await follows.live(urls);
+    void follows.retain(urls);
+    const items = { ...base.items };
+    for (const [key, item] of Object.entries(items)) {
+      const now = live.get(item.pr.url);
+      if (now && now.headSha === item.pr.headSha) items[key] = { ...item, pr: { ...item.pr, checks: now.checks, isDraft: now.isDraft } };
+    }
+    return { ...base, items, reviewLocation: fromSettings?.reviewLocation ?? "main" };
+  };
   server.handle(listInbox, (_input, { paseo: api }) => {
     capture(api);
     return view();
@@ -366,17 +383,19 @@ export default function contribute(server: PluginServerContext) {
     if (!parsed) throw new Error("Not a GitHub PR link (https://github.com/owner/repo/pull/123) or owner/repo#123");
     return fetchPrUpstream(parsed.repo, parsed.number);
   });
-  server.handle(getPrDeployments, ({ itemKey }, { paseo: api }) => {
+  server.handle(getPrDeployments, async ({ itemKey }, { paseo: api }) => {
     capture(api);
     const item = inbox.item(itemKey);
     if (!item) throw new Error(`Unknown PR ${itemKey}`);
-    return fetchPrDeployments(item.pr.repo, item.pr.number);
+    // COMPAT(changeRequestSubscriptions): hosts before fullstackhouse/paseo#285 can't follow PRs; ask GitHub once.
+    return (await follows.deployments(item.pr.url)) ?? fetchPrDeployments(item.pr.repo, item.pr.number);
   });
-  server.handle(previewPrDeployments, ({ ref }, { paseo: api }) => {
+  server.handle(previewPrDeployments, async ({ ref }, { paseo: api }) => {
     capture(api);
     const parsed = parsePrRef(ref);
     if (!parsed) throw new Error("Not a GitHub PR link (https://github.com/owner/repo/pull/123) or owner/repo#123");
-    return fetchPrDeployments(parsed.repo, parsed.number);
+    const url = `https://github.com/${parsed.repo}/pull/${parsed.number}`;
+    return (await follows.deployments(url)) ?? fetchPrDeployments(parsed.repo, parsed.number);
   });
   const editDraft = (runId: string, change: (draft: ReviewDraft) => ReviewDraft) => {
     const draft = reviews.get(runId);
@@ -538,6 +557,7 @@ export default function contribute(server: PluginServerContext) {
   timer = setTimeout(tick, 5_000);
 
   return async () => {
+    await follows.close();
     stopped = true;
     if (timer) clearTimeout(timer);
     unsubscribe();
