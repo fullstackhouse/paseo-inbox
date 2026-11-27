@@ -17,7 +17,7 @@ import { handoffDraft, postDraft, previewDraft } from "./server/post";
 import { ReviewStore } from "./server/reviews";
 import { addToConfigFile, findClone } from "./server/checkouts";
 import { configPath, dataDir, expandCheckouts, loadConfig, StateStore } from "./server/store";
-import { callTool, permissionAnswer, PREAPPROVED } from "./server/tools";
+import { callTool, permissionAnswer, withInboxTools } from "./server/tools";
 import { addCheckout, addPr, findCheckout, isUnconfigured, listInbox, parsePrRef, pollNow, restoreRun, runNow, skipRun, type Config } from "./shared/inbox";
 import { inboxSettings, readLegacyConfig } from "./shared/settings";
 import { decideTrust } from "./shared/trust";
@@ -33,7 +33,6 @@ import {
   getReview,
   handoffReview,
   INSTRUCTIONS,
-  MCP_SERVER,
   openExternal,
   patchPrint,
   postReview,
@@ -258,9 +257,7 @@ export default function contribute(server: PluginServerContext) {
   server.before("agent.create", ({ request }, { paseo: api }) => {
     capture(api);
     if (!request.env?.[RUN_ENV]) return;
-    const { config } = request;
-    const preapproved = [...(config.toolPolicy?.preapproved ?? []), ...PREAPPROVED];
-    return { ...request, config: { ...config, mcpServers: { ...config.mcpServers, [MCP_SERVER]: mcp }, toolPolicy: { preapproved } } };
+    return { ...request, config: withInboxTools(request.config, mcp) };
   });
   // Asking modes prompt even for preapproved MCP tools; these only read the PR or save a draft locally.
   // For a read-only (untrusted) run this hook is the gate: reads and inbox tools pass, the rest is denied.

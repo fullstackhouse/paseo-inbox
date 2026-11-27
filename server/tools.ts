@@ -6,6 +6,31 @@ import type { ReviewStore } from "./reviews";
 
 export const PREAPPROVED: McpToolRef[] = TOOLS.map((tool) => ({ kind: "mcp", server: MCP_SERVER, tool: tool.name }));
 
+/**
+ * Providers whose Paseo adapter enforces exact MCP tool grants. Paseo rejects `toolPolicy` for any other
+ * provider ("cannot preapprove exact MCP tools"), so a review run on Copilot, Pi, ACP, Antigravity or Muse
+ * would fail to start. Paseo doesn't tell plugins which providers these are yet, so the list mirrors the
+ * host's adapters; elsewhere the tools still attach and `permissionAnswer` decides each call.
+ */
+const EXACT_GRANT_PROVIDERS = new Set(["claude", "codex", "opencode"]);
+
+export function supportsExactToolGrants(provider: string): boolean {
+  return EXACT_GRANT_PROVIDERS.has(provider.split("/")[0] ?? provider);
+}
+
+interface AgentToolConfig {
+  provider: string;
+  mcpServers?: Record<string, unknown>;
+  toolPolicy?: { preapproved: McpToolRef[] };
+}
+
+/** Attaches the inbox MCP server, and preapproves its tools where the provider can hold an exact grant. */
+export function withInboxTools<T extends AgentToolConfig>(config: T, mcp: unknown): T & Pick<AgentToolConfig, "toolPolicy"> {
+  const attached = { ...config, mcpServers: { ...config.mcpServers, [MCP_SERVER]: mcp } };
+  if (!supportsExactToolGrants(config.provider)) return attached;
+  return { ...attached, toolPolicy: { preapproved: [...(config.toolPolicy?.preapproved ?? []), ...PREAPPROVED] } };
+}
+
 export function isInboxPermission(request: Pick<AgentPermissionRequest, "kind" | "name" | "metadata">): boolean {
   if (request.kind !== "tool") return false;
   if (request.name.startsWith(`mcp__${MCP_SERVER}__`)) return true;
