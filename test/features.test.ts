@@ -6,7 +6,7 @@ import { GithubMembership, parsePrRef } from "../server/github";
 import { Inbox, type StartRequest } from "../server/inbox";
 import { handoffDraft, postDraft, previewDraft } from "../server/post";
 import { ReviewStore } from "../server/reviews";
-import { callTool, permissionAnswer } from "../server/tools";
+import { callTool, permissionAnswer, withInboxTools } from "../server/tools";
 import { emptyState, isUnconfigured, type State } from "../shared/inbox";
 import { composeReview, prContext, ReviewInputSchema, toDraft, updateComment, type PrDetails } from "../shared/review";
 import { decideTrust, parseTrust, untrustedAllows } from "../shared/trust";
@@ -186,5 +186,26 @@ describe("settings", () => {
   it("defaults count as unconfigured, so inbox.json still applies", () => {
     expect(isUnconfigured(config({ sources: {}, rules: [] }))).toBe(true);
     expect(isUnconfigured(config())).toBe(false);
+  });
+});
+
+describe("withInboxTools", () => {
+  const mcp = { type: "stdio" as const, command: "node", args: ["bridge.js"] };
+  const base = { cwd: "/repo", mcpServers: { other: mcp } };
+
+  it("attaches the inbox MCP server and preapproves its tools for providers that enforce exact grants", () => {
+    for (const provider of ["claude", "codex", "opencode", "codex/gpt-5"]) {
+      const config = withInboxTools({ ...base, provider }, mcp);
+      expect(config.mcpServers).toMatchObject({ other: mcp, inbox: mcp });
+      expect(config.toolPolicy?.preapproved.map((grant) => grant.server)).toContain("inbox");
+    }
+  });
+
+  it("attaches the server but adds no tool policy for providers that can't preapprove, so the review agent still starts", () => {
+    for (const provider of ["copilot", "pi", "antigravity", "muse", "mock"]) {
+      const config = withInboxTools({ ...base, provider }, mcp);
+      expect(config.mcpServers).toMatchObject({ inbox: mcp });
+      expect(config.toolPolicy).toBeUndefined();
+    }
   });
 });
