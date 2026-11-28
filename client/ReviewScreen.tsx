@@ -65,7 +65,7 @@ const rpcChange = (change: CommentChange) => ("severity" in change ? { severity:
 
 /**
  * The review screen: everything needed to judge a PR without leaving Paseo. A header with the PR's
- * shape and the verdict; tabs for the reviewer's summary and reasoning, its walkthrough, every file's
+ * shape and the verdict; tabs for the reviewer's summary and reasoning, its code tour, every file's
  * diff with the comments in place, the author's description and the comment list; a bottom bar that
  * picks the verdict and posts after a confirm, then moves on to the next review.
  */
@@ -506,7 +506,7 @@ export function ReviewScreen({ theme, layout, navigation, params, setTitle }: Pl
   const threadsFor = (path: string) => details?.threads.filter((thread) => thread.path === path) ?? [];
   const tabs: { id: Tab; label: string }[] = [
     { id: "summary", label: "Summary" },
-    ...(chapters.length ? [{ id: "walkthrough" as const, label: `Walkthrough ${chapters.length}` }] : []),
+    ...(chapters.length ? [{ id: "walkthrough" as const, label: `Code tour ${chapters.length}` }] : []),
     ...(since && since.kind !== "none" ? [{ id: "since" as const, label: `Since ${since.base.slice(0, 7)}${since.kind === "changes" ? ` · ${since.files.length}` : ""}` }] : []),
     { id: "files", label: `Files ${details ? files.length : pr.files.length}` },
     { id: "description", label: "Description" },
@@ -1009,7 +1009,7 @@ export function ReviewScreen({ theme, layout, navigation, params, setTitle }: Pl
 
 const TAB_ABOUT: Record<Tab, string> = {
   summary: "your summary",
-  walkthrough: "your walkthrough",
+  walkthrough: "your code tour",
   since: "the changes since your last look",
   files: "the files",
   description: "the PR description",

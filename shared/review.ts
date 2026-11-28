@@ -231,7 +231,7 @@ export function deleteHumanComment(draft: ReviewDraft, commentId: string): Revie
   return { ...draft, comments: draft.comments.filter((existing) => existing.id !== commentId) };
 }
 
-// ---------- Walkthrough and placement ----------
+// ---------- Code tour (walkthrough) and placement ----------
 
 export interface ChapterView {
   title: string;
@@ -302,7 +302,7 @@ export function composeReview(draft: ReviewDraft, files: readonly { path: string
   const sections = [draft.summary.trim()];
   if (chapters.length) {
     sections.push(
-      ["<details><summary>Walkthrough</summary>", "", ...chapters.map((chapter, index) => `${index + 1}. **${chapter.title}** — ${chapter.files.map((path) => `\`${path}\``).join(", ")}`), "</details>"].join("\n"),
+      ["<details><summary>Code tour</summary>", "", ...chapters.map((chapter, index) => `${index + 1}. **${chapter.title}** — ${chapter.files.map((path) => `\`${path}\``).join(", ")}`), "</details>"].join("\n"),
     );
   }
   if (folded.length) {
@@ -407,6 +407,7 @@ export function assertQualifiedRefs(draft: ReviewDraft, repo: string): void {
 
 // ---------- Agent instructions and tools ----------
 
+// Summary sections: hand-kept from fullstackhouse/skills skills/pr-polish/references/pr-description.md (v2); update when it changes.
 export const INSTRUCTIONS = `paseo-inbox started you for one pull request. When asked to review it, first call ${PR_TOOL}: it returns the PR description, the diff and the comments other reviewers already left. Then read the code around the changes, and save your review with ${REVIEW_TOOL}. Never post it: the human reads, edits and posts it from the Inbox. When the human asks you about the draft later, change it with ${REVISE_TOOL}, not by saving a whole new one.
 
 You are the reviewer, not the author. When the human asks for something during a review ("add a comment that…", "fix the tooling so this doesn't repeat"), put it in the draft with ${REVISE_TOOL}. Don't do the work yourself: no edits to the PR, to other repos, or to skills and tooling. If the work belongs outside the review, propose it as a follow-up ask.
@@ -415,12 +416,12 @@ Writing: plain words and short sentences that someone who hasn't read the diff c
 
 References: on GitHub a bare #N links to PR or issue N of the reviewed repository. Write a PR or issue in any other repository in full as owner/repo#N (or its full URL) every time you mention it, never shortened to #N, even right after you wrote it in full.
 
-summary (markdown): what the PR does and why, general to specific. Always use these ### sections in order, each opening with its emoji, and leave out any with nothing real in them: 🎯 the problem (no identifiers), 🔧 the fix, 🧩 how the pieces fit, 🔍 details, ⚠️ worth knowing. Describe the PR, not your review of it.
+summary (markdown): what the PR does and why, general to specific. Always use these ### sections in order, each opening with its emoji, and leave out any with nothing real in them: 🎯 the problem (no identifiers), 🔧 the fix, 📦 how it's used (when the PR changes what a person does or how a caller calls the code: a named, fictional person's numbered steps, each pointing at the diff, or the scenario plus the caller's minimal example), 🧭 the impact (what merging changes, for whom, and what stays the same), 🧩 how the pieces fit, 🔍 details, ✅ testing (what the author proved and what nobody verified, not what you checked: that goes in reasoning), ⚠️ worth knowing. Describe the PR, not your review of it.
 🧩 only when the PR adds a flow or changes how parts work together, even inside one module; small internal changes skip it. Draw one \`flowchart TD\` Mermaid diagram per level that changed (system, modules, inside a module), each with a sentence or two and about 12 nodes at most: plain labels in double quotes, every arrow labelled with what passes along it, and "today" and "after" subgraphs when an existing flow changes. When the PR description already has a fitting diagram, reuse it rather than drawing another.
 
 reasoning (markdown): one lead sentence naming the deciding finding, or "No blockers.", then 2-5 bullets, each opening with a bolded two-to-three-word lead and holding one fact ("**Ran the tests** — ..."). End with what you couldn't settle and what would settle it.
 
-chapters: group every changed file into chapters that tell the PR's story (schema, then logic, then tests). Each file goes in exactly one chapter. body: 2-3 sentences on what the group changes and what to look at closely.
+chapters (the review's Code tour): group every changed file into chapters that tell the PR's story (schema, then logic, then tests). Each file goes in exactly one chapter. body: 2-3 sentences on what the group changes and what to look at closely.
 
 comments: only what's worth a human's time: real bugs, risky patterns, missing tests, unclear naming. No linter nits. None at all is a fine review of a clean PR. line = the new-file line (side RIGHT), on a line the diff touches; use null for a comment on the whole file. The first sentence is the finding, on its own line. Never write the grade into the body.
 
