@@ -4,8 +4,8 @@ import { INSTRUCTIONS } from "../shared/review";
 describe("reviewer instructions", () => {
   const summary = INSTRUCTIONS.slice(INSTRUCTIONS.indexOf("summary (markdown)"), INSTRUCTIONS.indexOf("reasoning (markdown)"));
 
-  it("lists 🧩 between the fix and the details", () => {
-    const order = ["🎯", "🔧", "🧩", "🔍", "⚠️"].map((emoji) => summary.indexOf(emoji));
+  it("lists the house PR format's sections in order, 📦 usage, 🧭 impact and ✅ testing included", () => {
+    const order = ["🎯", "🔧", "📦", "🧭", "🧩", "🔍", "✅", "⚠️"].map((emoji) => summary.indexOf(emoji));
     expect(order.every((at) => at >= 0)).toBe(true);
     expect([...order].sort((a, b) => a - b)).toEqual(order);
   });

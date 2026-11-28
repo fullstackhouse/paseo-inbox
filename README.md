@@ -60,10 +60,10 @@ Until settings hold any sources or rules, a legacy `~/.paseo/inbox.json` applies
 
 ## Review drafts
 
-Inbox agents get one MCP tool, `inbox_review_draft`. It takes a verdict, a confidence (0–100), a markdown summary, optional chapters, and inline comments on lines of the diff. The draft is saved under `~/.paseo/plugin-data/inbox/reviews/`, and the run moves to **Needs a decision**. Tap a drafted row to open the **review screen**, which works on a phone and on desktop:
+Inbox agents get one MCP tool, `inbox_review_draft`. It takes a verdict, a confidence (0–100), a markdown summary in the house PR-description format, optional chapters (the Code tour), and inline comments on lines of the diff. The draft is saved under `~/.paseo/plugin-data/inbox/reviews/`, and the run moves to **Needs a decision**. Tap a drafted row to open the **review screen**, which works on a phone and on desktop:
 
 - **Header:** the PR's repo and number, title, author, branch → base, head SHA, size, the verdict with confidence, plus **Open on GitHub ↗** and **Ask the reviewer**. Ask the reviewer opens the agent that wrote the draft, so you can argue with it or have it redraft. A redraft replaces your edits.
-- **Tabs:** Summary, Walkthrough (the reviewer's chapters with their files), Files (every file with its diff and the drafted comments under their lines, plus Expand all, Collapse all and Only commented), Description (the author's PR body), and Comments.
+- **Tabs:** Summary, Code tour (the reviewer's chapters with their files), Files (every file with its diff and the drafted comments under their lines, plus Expand all, Collapse all and Only commented), Description (the author's PR body), and Comments.
 - **Comments:** each one can be kept, edited, dropped or restored.
 - **Moving between drafts:** ‹ › steps through the other drafts waiting for you.
 - **Reading:** syntax colours in diffs. A markdown file the PR adds opens as a document, with comments under their paragraphs (Diff is one tap away). Markdown uses Paseo’s shared renderer, including Mermaid diagrams, tables, images and links. Document comments use the FSH host’s Markdown annotation API (ship the matching host change before this plugin). Each file has a Viewed box, which unticks if the file changes; "Not viewed" opens only the files you haven't seen. Tapping a comment's path jumps to its file.

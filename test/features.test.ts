@@ -86,6 +86,10 @@ describe("already raised", () => {
     const asNew = updateComment(draft, "c1", { unraise: true });
     expect(composeReview(asNew, files).payload.comments.map((comment) => comment.line)).toEqual([11, 12]);
   });
+  it("posts the chapters as a folded Code tour", () => {
+    const toured = toDraft(ReviewInputSchema.parse({ verdict: "approve", confidence: 80, summary: "s", chapters: [{ title: "Basket", body: "b", files: [PATH] }] }), { id: "r", itemKey: "acme/shop#7", version: "aaaaaaa111" }, NOW);
+    expect(composeReview(toured, files).payload.body).toContain(`<details><summary>Code tour</summary>\n\n1. **Basket** — \`${PATH}\``);
+  });
   it("the reviewer sees others' comments with ids in inbox_pr", () => {
     const text = prContext({ url: "https://github.com/acme/shop/pull/7", title: "Basket" }, details());
     expect(text).toContain("- id 501 · @kuba · src/basket/BasketPage.tsx:11: State is lost on refresh.");
